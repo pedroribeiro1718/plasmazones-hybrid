@@ -1,0 +1,13 @@
+{
+  "id": "{b24a918e-2c03-4ef0-9f20-8cc8ec6e54c1}",
+  "name": "Float Steam in Omarchy mode",
+  "enabled": true,
+  "priority": 200,
+  "match": {
+    "all": [
+      {"field": "appId", "op": "appIdMatches", "value": "steam"},
+      {"field": "mode", "op": "equals", "value": "tiling"}
+    ]
+  },
+  "actions": [{"type": "float"}]
+}

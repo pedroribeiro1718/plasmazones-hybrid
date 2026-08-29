@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly PZ_SERVICE="org.plasmazones"
+readonly PZ_OBJECT="/PlasmaZones"
+readonly PZ_LAYOUT_IFACE="org.plasmazones.LayoutRegistry"
+readonly PZ_SETTINGS_IFACE="org.plasmazones.Settings"
+readonly PZ_SNAP_IFACE="org.plasmazones.Snap"
+readonly PZ_TILING_IFACE="org.plasmazones.Tiling"
+readonly PZ_TRACKING_IFACE="org.plasmazones.WindowTracking"
+readonly BSP_LAYOUT_ID="{1c85ee9a-25f6-4109-a074-b0bc7072418c}"
+readonly GUARD_ID="plasmazones-omarchy-lock"
+readonly GUARD_SCRIPT="${HOME}/.local/share/kwin/scripts/${GUARD_ID}/contents/code/main.js"
+readonly TRANSITION_SETTLE_SECONDS="${PLASMAZONES_TRANSITION_SETTLE_SECONDS:-0.35}"
+
+fail() {
+    notify-send --app-name="PlasmaZones" --urgency=critical \
+        "PlasmaZones mode switch failed" "$1"
+    exit 1
+}
+
+command -v qdbus6 >/dev/null || fail "qdbus6 is not installed."
+command -v jq >/dev/null || fail "jq is not installed."
+
+usage() {
+    cat <<'EOF'
+Usage: plasmazones-mode-toggle [toggle|omarchy|fancyzones|reflow|status]
+
+  toggle       Switch every active output to the other mode (default)
+  omarchy      Activate automatic tiling and rearrange all tiled windows
+  fancyzones   Activate fixed zones and arrange open windows into them
+  reflow       Rearrange windows again without changing mode
+  status       Print the effective mode and algorithm for each output
+EOF
+}
+
+# Prevent two rapid shortcut presses from interleaving assignment batches.
+exec 9>"/tmp/plasmazones-mode-toggle-${UID}.lock"
+flock -n 9 || exit 0
+
+read_states() {
+    qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+        "$PZ_LAYOUT_IFACE.getScreenStates"
+}
+
+states="$(read_states)" \
+    || fail "Could not read screen assignments from plasmazonesd."
+
+jq -e 'type == "array" and length > 0' >/dev/null <<<"$states" \
+    || fail "PlasmaZones returned no active screen contexts."
+
+requested_mode="${1:-toggle}"
+case "$requested_mode" in
+    -h|--help|help)
+        usage
+        exit 0
+        ;;
+    status)
+        jq -r '.[] | "\(.screenId): \(if .mode == 1 then "Omarchy" elif .mode == 0 then "FancyZones" else "Scrolling" end) [\(.algorithmId // "none")]"' \
+            <<<"$states"
+        exit 0
+        ;;
+    reflow)
+        target_mode=-1
+        ;;
+    omarchy)
+        target_mode=1
+        ;;
+    fancy|fancyzones)
+        target_mode=0
+        ;;
+    toggle)
+        # A mixed desktop converges to FancyZones first. The following press
+        # then switches every output to Omarchy.
+        if jq -e 'all(.[]; .mode == 0)' >/dev/null <<<"$states"; then
+            target_mode=1
+        else
+            target_mode=0
+        fi
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac
+
+if [[ "$target_mode" -eq 1 ]]; then
+    mode_name="Omarchy mode"
+    mode_detail="Automatic tiling is active and open windows were retiled."
+elif [[ "$target_mode" -eq 0 ]]; then
+    mode_name="FancyZones mode"
+    mode_detail="Open windows were arranged into the active zones. Ctrl+Alt-drag spans zones."
+else
+    mode_name="PlasmaZones rearranged"
+    mode_detail="Open windows were rearranged in their current mode."
+fi
+
+set_setting() {
+    qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+        "$PZ_SETTINGS_IFACE.setSetting" "$1" "$2" >/dev/null \
+        || fail "Could not set PlasmaZones option $1."
+}
+
+wait_for_mode() {
+    local wanted="$1"
+    local attempt
+
+    for attempt in {1..20}; do
+        states="$(read_states)" || return 1
+        if jq -e --argjson wanted "$wanted" \
+            'all(.[]; .mode == $wanted)' >/dev/null <<<"$states"; then
+            return 0
+        fi
+        sleep 0.05
+    done
+    return 1
+}
+
+reflow_windows() {
+    local current_states="$1"
+    local snapped_windows floating_windows
+
+    # applyAssignmentChanges performs PlasmaZones' preservation pass first.
+    # Give its queued KWin geometries one short frame budget to drain, then
+    # explicitly fill the new placement model exactly once.
+    sleep "$TRANSITION_SETTLE_SECONDS"
+
+    if jq -e 'any(.[]; .mode == 1)' >/dev/null <<<"$current_states"; then
+        qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+            "$PZ_TILING_IFACE.retileAllScreens" >/dev/null \
+            || fail "Could not retile the Omarchy outputs."
+    fi
+
+    # A mode transition should produce a fresh zone fill, not preserve stale
+    # stacks or floating state from the tiling tree. Only clear globally when
+    # every output is in FancyZones; mixed-mode reflow must not disturb an
+    # Omarchy output's tracking.
+    if jq -e 'all(.[]; .mode == 0)' >/dev/null <<<"$current_states"; then
+        snapped_windows="$(qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+            "$PZ_TRACKING_IFACE.getSnappedWindows")"
+        while IFS= read -r window_id; do
+            [[ -n "$window_id" ]] || continue
+            qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+                "$PZ_SNAP_IFACE.windowUnsnapped" "$window_id" >/dev/null
+        done <<<"$snapped_windows"
+
+        floating_windows="$(qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+            "$PZ_TRACKING_IFACE.getFloatingWindows")"
+        while IFS= read -r window_id; do
+            [[ -n "$window_id" ]] || continue
+            qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+                "$PZ_SNAP_IFACE.setWindowFloat" "$window_id" false >/dev/null
+        done <<<"$floating_windows"
+    fi
+
+    while IFS= read -r screen_id; do
+        qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+            "$PZ_SNAP_IFACE.snapAllWindows" "$screen_id" >/dev/null \
+            || fail "Could not arrange the FancyZones output $screen_id."
+    done < <(jq -r '.[] | select(.mode == 0) | .screenId' <<<"$current_states")
+
+    # snapAllWindows is asynchronous inside the KWin effect. Keep the process
+    # lock briefly so a rapid second shortcut cannot overlap its batch.
+    sleep 0.25
+}
+
+if [[ "$target_mode" -eq -1 ]]; then
+    reflow_windows "$states"
+    notify-send --app-name="PlasmaZones" --icon=preferences-system-windows \
+        "$mode_name" "$mode_detail"
+    exit 0
+fi
+
+# Omarchy applies every geometry in a retile together. FancyZones restores
+# the cascade used by the drag/snap UI. The 10 ms value is PlasmaZones' lower
+# bound and is inert while AllAtOnce is selected.
+if [[ "$target_mode" -eq 1 ]]; then
+    set_setting animationSequenceMode 0
+    set_setting animationStaggerInterval 10
+    set_setting autotileRespectMinimumSize true
+    set_setting autotileMaxWindows 6
+    set_setting autotileOverflowBehavior 0
+fi
+
+# An explicit command for the already-active mode is still useful: it acts as
+# a repair/reflow command without rewriting the assignment store.
+if jq -e --argjson wanted "$target_mode" \
+    'all(.[]; .mode == $wanted)' >/dev/null <<<"$states"; then
+    if [[ "$target_mode" -eq 0 ]]; then
+        set_setting animationSequenceMode 1
+        set_setting animationStaggerInterval 40
+    fi
+    reflow_windows "$states"
+    notify-send --app-name="PlasmaZones" --icon=preferences-system-windows \
+        "$mode_name" "$mode_detail"
+    exit 0
+fi
+
+qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+    "$PZ_LAYOUT_IFACE.setSaveBatchMode" true >/dev/null \
+    || fail "Could not begin the assignment update."
+
+batch_open=true
+close_batch_on_error() {
+    if [[ "$batch_open" == true ]]; then
+        qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+            "$PZ_LAYOUT_IFACE.setSaveBatchMode" false >/dev/null 2>&1 || true
+    fi
+}
+trap close_batch_on_error EXIT
+
+while IFS= read -r state; do
+    screen_id="$(jq -r '.screenId' <<<"$state")"
+    desktop="$(jq -r '.virtualDesktop' <<<"$state")"
+    activity="$(jq -r '.activity // ""' <<<"$state")"
+    snapping_layout="$(jq -r '.snappingLayoutId // ""' <<<"$state")"
+    tiling_algorithm="$(jq -r '.algorithmId // ""' <<<"$state")"
+
+    [[ -n "$snapping_layout" && "$snapping_layout" != "none" ]] \
+        || snapping_layout="$BSP_LAYOUT_ID"
+    [[ -n "$tiling_algorithm" && "$tiling_algorithm" != "none" ]] \
+        || tiling_algorithm="dwindle"
+
+    qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+        "$PZ_LAYOUT_IFACE.setAssignmentEntry" \
+        "$screen_id" "$desktop" "$activity" "$target_mode" \
+        "$snapping_layout" "$tiling_algorithm" >/dev/null \
+        || fail "Could not update $screen_id."
+done < <(jq -c '.[]' <<<"$states")
+
+qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+    "$PZ_LAYOUT_IFACE.applyAssignmentChanges" >/dev/null \
+    || fail "Could not apply the new mode."
+
+if [[ "$target_mode" -eq 0 ]]; then
+    set_setting animationSequenceMode 1
+    set_setting animationStaggerInterval 40
+fi
+
+batch_open=false
+trap - EXIT
+
+wait_for_mode "$target_mode" \
+    || fail "PlasmaZones did not converge to $mode_name."
+reflow_windows "$states"
+
+# Reload the guard after every mode change so its synchronous per-output cache
+# always matches the assignments that were just applied.
+if [[ -f "$GUARD_SCRIPT" ]]; then
+    qdbus6 org.kde.KWin /Scripting \
+        org.kde.kwin.Scripting.unloadScript "$GUARD_ID" >/dev/null 2>&1 || true
+    qdbus6 org.kde.KWin /Scripting \
+        org.kde.kwin.Scripting.loadScript "$GUARD_SCRIPT" "$GUARD_ID" >/dev/null \
+        || fail "Could not reload the Omarchy mouse guard."
+    qdbus6 org.kde.KWin /Scripting \
+        org.kde.kwin.Scripting.start >/dev/null \
+        || fail "Could not start the Omarchy mouse guard."
+fi
+
+notify-send --app-name="PlasmaZones" --icon=preferences-system-windows \
+    "$mode_name" "$mode_detail"

@@ -1,0 +1,46 @@
+{
+  "id": "{d14e1a40-4188-4f2d-9f5f-2f939a2c3e61}",
+  "name": "PlasmaZones Hybrid Grid (3x2)",
+  "description": "Six equal zones for FancyZones-style snapping and spanning",
+  "type": 3,
+  "showZoneNumbers": true,
+  "aspectRatioClass": "any",
+  "zones": [
+    {
+      "id": "{59f32c55-7885-4ddd-8cb2-c1ea89cd0ddb}",
+      "name": "Top Left",
+      "zoneNumber": 1,
+      "relativeGeometry": {"x": 0, "y": 0, "width": 0.333333, "height": 0.5}
+    },
+    {
+      "id": "{847063ba-5236-4c33-93b0-e3b9f8cba4ab}",
+      "name": "Top Center",
+      "zoneNumber": 2,
+      "relativeGeometry": {"x": 0.333333, "y": 0, "width": 0.333334, "height": 0.5}
+    },
+    {
+      "id": "{7b8c36a1-d342-43f3-a881-a2e2e45ff2c1}",
+      "name": "Top Right",
+      "zoneNumber": 3,
+      "relativeGeometry": {"x": 0.666667, "y": 0, "width": 0.333333, "height": 0.5}
+    },
+    {
+      "id": "{e3d511fc-7d74-44e7-a875-3d790ec644bc}",
+      "name": "Bottom Left",
+      "zoneNumber": 4,
+      "relativeGeometry": {"x": 0, "y": 0.5, "width": 0.333333, "height": 0.5}
+    },
+    {
+      "id": "{0fac9b8a-903a-439f-bbaf-dcc5671cc36f}",
+      "name": "Bottom Center",
+      "zoneNumber": 5,
+      "relativeGeometry": {"x": 0.333333, "y": 0.5, "width": 0.333334, "height": 0.5}
+    },
+    {
+      "id": "{09292138-0c49-4382-a791-5394c28f8b34}",
+      "name": "Bottom Right",
+      "zoneNumber": 6,
+      "relativeGeometry": {"x": 0.666667, "y": 0.5, "width": 0.333333, "height": 0.5}
+    }
+  ]
+}

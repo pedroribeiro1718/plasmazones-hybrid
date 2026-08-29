@@ -1,0 +1,18 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Pedro Ribeiro"
+            }
+        ],
+        "Description": "Keep tiled windows fixed during mouse move and resize gestures in PlasmaZones Omarchy mode",
+        "Icon": "preferences-system-windows",
+        "Id": "plasmazones-omarchy-lock",
+        "License": "MIT",
+        "Name": "PlasmaZones Omarchy Mouse Lock",
+        "Version": "1.3.0"
+    },
+    "X-Plasma-API": "javascript"
+}
+

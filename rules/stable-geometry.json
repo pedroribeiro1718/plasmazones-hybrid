@@ -1,0 +1,8 @@
+{
+  "id": "{e0aa55fd-e6f2-4bdf-92b9-577e67fe477e}",
+  "name": "Stable geometry in Omarchy mode",
+  "enabled": true,
+  "priority": 1000,
+  "match": {"field": "mode", "op": "equals", "value": "tiling"},
+  "actions": [{"type": "excludeAnimations"}]
+}

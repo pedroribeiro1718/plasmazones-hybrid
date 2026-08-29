@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Toggle PlasmaZones Mode
+Comment=Switch between Omarchy tiling and FancyZones snapping, then rearrange windows
+Exec=@EXEC@ toggle
+Icon=preferences-system-windows
+Terminal=false
+NoDisplay=true
+X-KDE-Shortcuts=Meta+Shift+T
+Categories=Settings;DesktopSettings;

@@ -1,0 +1,20 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install checks
+        run: sudo apt-get update && sudo apt-get install -y jq shellcheck
+      - name: Smoke test
+        run: ./tests/smoke.sh
+      - name: ShellCheck
+        run: shellcheck install.sh uninstall.sh bin/plasmazones-mode-toggle tests/smoke.sh

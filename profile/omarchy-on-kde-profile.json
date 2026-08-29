@@ -1,0 +1,116 @@
+{
+  "_version": 6,
+  "id": "{c9d1ec53-b21a-4d4f-a5aa-9d035cc563d1}",
+  "name": "Omarchy on KDE",
+  "description": "Omarchy-inspired keyboard tiling with DPI-safe limits, Super-based focus and swaps, fixed tiled windows, and a separate FancyZones snapping mode.",
+  "parent": null,
+  "config": {
+    "Gaps": {
+      "Inner": 8,
+      "Outer": 12,
+      "UsePerSide": false
+    },
+    "Tiling": {
+      "Enabled": true
+    },
+    "Tiling.Algorithm": {
+      "Default": "master-stack",
+      "MasterCount": 1,
+      "MaxWindows": 6,
+      "SplitRatio": 0.5,
+      "SplitRatioStep": 0.05
+    },
+    "Tiling.Behavior": {
+      "DragBehavior": 1,
+      "FocusFollowsMouse": false,
+      "FocusNewWindows": true,
+      "InsertPosition": 1,
+      "KeepFloatingAbove": true,
+      "OverflowBehavior": 0,
+      "RespectMinimumSize": true
+    },
+    "Tiling.Gaps": {
+      "SmartGaps": false
+    },
+    "Shortcuts.Global": {
+      "FocusZoneDown": "Meta+Down",
+      "FocusZoneLeft": "Meta+Left",
+      "FocusZoneRight": "Meta+Right",
+      "FocusZoneUp": "Meta+Up",
+      "LayoutPicker": "Meta+G",
+      "OpenEditor": "Meta+Shift+G",
+      "SwapWindowDown": "Meta+Shift+Down",
+      "SwapWindowLeft": "Meta+Shift+Left",
+      "SwapWindowRight": "Meta+Shift+Right",
+      "SwapWindowUp": "Meta+Shift+Up",
+      "ToggleWindowFloat": "Meta+T"
+    },
+    "Shortcuts.Tiling": {
+      "DecMasterRatio": "Meta+-",
+      "IncMasterRatio": "Meta+=",
+      "Retile": "Meta+Ctrl+T"
+    },
+    "Windows": {
+      "BorderColorActive": "#ff89b4fa",
+      "BorderColorInactive": "#cc5c6370",
+      "BorderScope": "all",
+      "FocusFadeDuration": 180,
+      "HideTitleBars": true,
+      "Radius": 10,
+      "ShowBorder": true,
+      "TitleBarScope": "tiled",
+      "Width": 2
+    }
+  },
+  "rules": {
+    "order": [
+      "{e0aa55fd-e6f2-4bdf-92b9-577e67fe477e}",
+      "{b24a918e-2c03-4ef0-9f20-8cc8ec6e54c1}"
+    ],
+    "upserts": [
+      {
+        "id": "{e0aa55fd-e6f2-4bdf-92b9-577e67fe477e}",
+        "name": "Stable geometry in Omarchy mode",
+        "enabled": true,
+        "priority": 1000,
+        "match": {
+          "field": "mode",
+          "op": "equals",
+          "value": "tiling"
+        },
+        "actions": [
+          {
+            "type": "excludeAnimations"
+          }
+        ]
+      },
+      {
+        "id": "{b24a918e-2c03-4ef0-9f20-8cc8ec6e54c1}",
+        "name": "Float Steam in Omarchy mode",
+        "enabled": true,
+        "priority": 200,
+        "match": {
+          "all": [
+            {
+              "field": "appId",
+              "op": "appIdMatches",
+              "value": "steam"
+            },
+            {
+              "field": "mode",
+              "op": "equals",
+              "value": "tiling"
+            }
+          ]
+        },
+        "actions": [
+          {
+            "type": "float"
+          }
+        ]
+      }
+    ],
+    "removedIds": []
+  }
+}
+
