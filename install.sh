@@ -23,7 +23,7 @@ fail() {
     exit 1
 }
 
-for command_name in qdbus6 jq flock install sed sha256sum kwriteconfig6 kreadconfig6 kbuildsycoca6; do
+for command_name in qdbus6 jq flock install sed awk sha256sum kwriteconfig6 kreadconfig6 kbuildsycoca6; do
     command -v "$command_name" >/dev/null || fail "$command_name is required."
 done
 
@@ -31,9 +31,7 @@ qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1
     || fail "PlasmaZones is not running. Install and enable it first."
 
 if [[ -f "$STATE_FILE" ]]; then
-    printf 'PlasmaZones Hybrid is already installed. Nothing changed.\n'
-    printf 'Run ./uninstall.sh before reinstalling so the original rollback state is preserved.\n'
-    exit 0
+    exec "$ROOT/upgrade.sh"
 fi
 
 exec 9>"/tmp/plasmazones-hybrid-install-${UID}.lock"
@@ -163,9 +161,10 @@ set_setting autotileOverflowBehavior 0
 set_setting autotileRespectMinimumSize true
 set_setting autotileSmartGaps false
 set_setting autotileSplitRatio 0.5
-set_setting defaultAutotileAlgorithm master-stack
+set_setting defaultAutotileAlgorithm dwindle-memory
 set_setting animationSequenceMode 0
 set_setting animationStaggerInterval 10
+set_setting animationDuration 120
 set_setting showWindowBorder true
 set_setting hideWindowTitleBars true
 set_setting windowBorderColorActive '#ff89b4fa'
@@ -174,24 +173,59 @@ set_setting windowBorderRadius 10
 set_setting windowBorderScope all
 set_setting windowBorderWidth 2
 set_setting windowTitleBarScope tiled
-set_setting focusFadeDuration 180
-set_setting focusZoneDownShortcut 'Meta+Down'
-set_setting focusZoneLeftShortcut 'Meta+Left'
-set_setting focusZoneRightShortcut 'Meta+Right'
-set_setting focusZoneUpShortcut 'Meta+Up'
-set_setting swapWindowDownShortcut 'Meta+Shift+Down'
-set_setting swapWindowLeftShortcut 'Meta+Shift+Left'
-set_setting swapWindowRightShortcut 'Meta+Shift+Right'
-set_setting swapWindowUpShortcut 'Meta+Shift+Up'
+set_setting focusFadeDuration 100
+set_setting focusZoneDownShortcut ''
+set_setting focusZoneLeftShortcut ''
+set_setting focusZoneRightShortcut ''
+set_setting focusZoneUpShortcut ''
+set_setting swapWindowLeftShortcut ''
+set_setting swapWindowRightShortcut ''
+set_setting swapWindowUpShortcut ''
+set_setting swapWindowDownShortcut ''
 set_setting layoutPickerShortcut 'Meta+G'
 set_setting openEditorShortcut 'Meta+Shift+G'
-set_setting toggleWindowFloatShortcut 'Meta+T'
-set_setting autotileDecMasterRatioShortcut 'Meta+-'
-set_setting autotileIncMasterRatioShortcut 'Meta+='
+set_setting toggleWindowFloatShortcut ''
+# The KWin controller owns the Omarchy resize family. PlasmaZones' native
+# master-ratio/count actions are global and would otherwise consume the same
+# keys even on a persistent split-tree output.
+set_setting autotileDecMasterRatioShortcut ''
+set_setting autotileIncMasterRatioShortcut ''
+set_setting autotileDecMasterCountShortcut ''
+set_setting autotileIncMasterCountShortcut ''
+set_setting scrollingMaximizeColumnShortcut ''
 set_setting autotileRetileShortcut 'Meta+Ctrl+T'
 # The repository launcher owns Meta+Shift+T; release PlasmaZones' native
 # per-screen mode cycle so one key press cannot run both implementations.
 set_setting autotileToggleShortcut ''
+
+# Remove registrations left behind by tilers this setup replaces. Their KWin
+# scripts may already be gone, but KGlobalAccel retains the action records.
+while IFS= read -r stale_action; do
+    [[ -n "$stale_action" ]] || continue
+    qdbus6 org.kde.kglobalaccel /kglobalaccel \
+        org.kde.KGlobalAccel.unregister kwin "$stale_action" >/dev/null 2>&1 || true
+    kwriteconfig6 --file kglobalshortcutsrc --group kwin \
+        --key "$stale_action" --delete
+done < <(awk -F= '/^(KZones|Krohnkite|Polonium)/ {print $1}' \
+    "${HOME}/.config/kglobalshortcutsrc")
+
+# KWin's zoom action ships Meta+= as an alternate default. Keep the action,
+# but leave it unbound while PlasmaZones Hybrid is installed.
+qdbus6 org.kde.kglobalaccel /kglobalaccel \
+    org.kde.KGlobalAccel.unregister kwin view_zoom_in >/dev/null 2>&1 || true
+kwriteconfig6 --file kglobalshortcutsrc --group kwin --key view_zoom_in \
+    $'none,Meta++\tMeta+=,Zoom In'
+
+# Omarchy workspaces use Super+1..4. Release Plasma's task-manager launch
+# bindings for those four keys; uninstall restores the original config file.
+for workspace_number in 1 2 3 4; do
+    task_action="activate task manager entry ${workspace_number}"
+    qdbus6 org.kde.kglobalaccel /kglobalaccel \
+        org.kde.KGlobalAccel.unregister plasmashell "$task_action" >/dev/null 2>&1 || true
+    kwriteconfig6 --file kglobalshortcutsrc --group plasmashell \
+        --key "$task_action" \
+        "none,Meta+${workspace_number},Activate Task Manager Entry ${workspace_number}"
+done
 
 upsert_rule_json() {
     local rule_json="$1"
@@ -248,14 +282,10 @@ while IFS= read -r state; do
     activity="$(jq -r '.activity // ""' <<<"$state")"
     screen_info="$(qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" "$SCREEN_IFACE.getScreenInfo" "$screen_id")"
     logical_width="$(jq -r '.geometry.width' <<<"$screen_info")"
-    if (( logical_width >= 2200 )); then
-        algorithm="bsp"
-    else
-        algorithm="master-stack"
-    fi
+    algorithm="dwindle-memory"
     qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" "$LAYOUT_IFACE.setAssignmentEntry" \
         "$screen_id" "$desktop" "$activity" 1 "$layout_id" "$algorithm" >/dev/null
-    printf 'Configured %s (%s logical px): %s\n' "$screen_id" "$logical_width" "$algorithm"
+    printf 'Configured %s (%s logical px): persistent %s\n' "$screen_id" "$logical_width" "$algorithm"
 done < <(jq -c '.[]' <<<"$states_before")
 qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" "$LAYOUT_IFACE.applyAssignmentChanges" >/dev/null
 

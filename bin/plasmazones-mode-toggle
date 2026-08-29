@@ -11,6 +11,7 @@ readonly PZ_SNAP_IFACE="org.plasmazones.Snap"
 readonly PZ_TILING_IFACE="org.plasmazones.Tiling"
 readonly PZ_TRACKING_IFACE="org.plasmazones.WindowTracking"
 readonly BSP_LAYOUT_ID="{1c85ee9a-25f6-4109-a074-b0bc7072418c}"
+readonly INSTALL_STATE="${XDG_STATE_HOME:-${HOME}/.local/state}/plasmazones-hybrid/install-state.json"
 readonly GUARD_ID="plasmazones-omarchy-lock"
 readonly GUARD_SCRIPT="${HOME}/.local/share/kwin/scripts/${GUARD_ID}/contents/code/main.js"
 readonly TRANSITION_SETTLE_SECONDS="${PLASMAZONES_TRANSITION_SETTLE_SECONDS:-0.35}"
@@ -51,6 +52,11 @@ states="$(read_states)" \
 
 jq -e 'type == "array" and length > 0' >/dev/null <<<"$states" \
     || fail "PlasmaZones returned no active screen contexts."
+
+fancy_layout_id=""
+if [[ -f "$INSTALL_STATE" ]]; then
+    fancy_layout_id="$(jq -r '.layoutId // ""' "$INSTALL_STATE")"
+fi
 
 requested_mode="${1:-toggle}"
 case "$requested_mode" in
@@ -113,7 +119,7 @@ active_output_rule_id() {
         "${digest:16:4}" "${digest:20:12}"
 }
 
-bsp_ratio_rule_id() {
+legacy_bsp_ratio_rule_id() {
     local digest
     digest="$(printf 'plasmazones-hybrid:bsp-ratio:%s' "$1" | sha256sum)"
     digest="${digest%% *}"
@@ -157,39 +163,33 @@ ensure_active_output_rules() {
     done < <(jq -r 'map(.screenId) | unique[]' <<<"$current_states")
 }
 
-ensure_bsp_ratio_rules() {
+remove_legacy_bsp_ratio_rules() {
     local current_states="$1"
-    local all_rules screen_id rule_id rule_json
+    local all_rules screen_id rule_id
     all_rules="$(qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
         "$PZ_RULES_IFACE.getAllRules")" \
         || fail "Could not read PlasmaZones rules."
 
     while IFS= read -r screen_id; do
-        rule_id="$(bsp_ratio_rule_id "$screen_id")"
-        rule_json="$(jq -cn --arg id "$rule_id" --arg screen "$screen_id" '{
-            id: $id,
-            name: ("Keep Binary Split balanced on " + $screen),
-            enabled: true,
-            priority: 500,
-            match: {field: "screenId", op: "equals", value: $screen},
-            actions: [{type: "setSplitRatio", value: 0.5}]
-        }')"
-
-        if jq -e --argjson wanted "$rule_json" \
-            'any(.rules[]; . == $wanted)' >/dev/null <<<"$all_rules"; then
-            continue
-        fi
+        rule_id="$(legacy_bsp_ratio_rule_id "$screen_id")"
         if jq -e --arg id "$rule_id" \
             'any(.rules[]; .id == $id)' >/dev/null <<<"$all_rules"; then
             qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
-                "$PZ_RULES_IFACE.updateRule" "$rule_json" >/dev/null \
-                || fail "Could not update the balanced BSP ratio for $screen_id."
-        else
-            qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
-                "$PZ_RULES_IFACE.addRule" "$rule_json" >/dev/null \
-                || fail "Could not add the balanced BSP ratio for $screen_id."
+                "$PZ_RULES_IFACE.removeRule" "$rule_id" >/dev/null \
+                || fail "Could not remove the obsolete BSP ratio rule for $screen_id."
         fi
-    done < <(jq -r '.[] | select(.algorithmId == "bsp") | .screenId' <<<"$current_states")
+    done < <(jq -r 'map(.screenId) | unique[]' <<<"$current_states")
+}
+
+reload_guard() {
+    [[ -f "$GUARD_SCRIPT" ]] || return 0
+    qdbus6 org.kde.KWin /Scripting \
+        org.kde.kwin.Scripting.unloadScript "$GUARD_ID" >/dev/null 2>&1 || true
+    qdbus6 org.kde.KWin /Scripting \
+        org.kde.kwin.Scripting.loadScript "$GUARD_SCRIPT" "$GUARD_ID" \
+        >/dev/null || return 1
+    qdbus6 org.kde.KWin /Scripting \
+        org.kde.kwin.Scripting.start >/dev/null || return 1
 }
 
 wait_for_mode() {
@@ -208,13 +208,11 @@ wait_for_mode() {
 
 reflow_windows() {
     local current_states="$1"
-    local snapped_windows floating_windows
+    local snapped_windows
 
-    # A 60% BSP split on a 16:9 output leaves the first region wider than
-    # tall, so PlasmaZones splits it vertically again and produces three
-    # columns. Pin BSP outputs to 50% before every reflow; Master + Stack
-    # outputs retain their independent ratio and algorithm.
-    ensure_bsp_ratio_rules "$current_states"
+    # v1 used a global 50% BSP rule. Omarchy v2 uses dwindle-memory instead:
+    # each edge owns a persistent branch-local ratio and can be resized.
+    remove_legacy_bsp_ratio_rules "$current_states"
 
     # applyAssignmentChanges performs PlasmaZones' preservation pass first.
     # Give its queued KWin geometries one short frame budget to drain, then
@@ -240,13 +238,11 @@ reflow_windows() {
                 "$PZ_SNAP_IFACE.windowUnsnapped" "$window_id" >/dev/null
         done <<<"$snapped_windows"
 
-        floating_windows="$(qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
-            "$PZ_TRACKING_IFACE.getFloatingWindows")"
-        while IFS= read -r window_id; do
-            [[ -n "$window_id" ]] || continue
-            qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
-                "$PZ_SNAP_IFACE.setWindowFloat" "$window_id" false >/dev/null
-        done <<<"$floating_windows"
+        # Do not bulk-unfloat before snap-all. PlasmaZones restores each
+        # floating window's historical geometry when setWindowFloat(false) is
+        # called, and that history may belong to another output. snap-all is
+        # explicitly user-initiated and clears floating state as it commits
+        # each zone, preserving the window's current physical output.
     fi
 
     while IFS= read -r screen_id; do
@@ -286,8 +282,11 @@ fi
 
 # An explicit command for the already-active mode is still useful: it acts as
 # a repair/reflow command without rewriting the assignment store.
-if jq -e --argjson wanted "$target_mode" \
-    'all(.[]; .mode == $wanted)' >/dev/null <<<"$states"; then
+if [[ "$requested_mode" == "toggle" ]] &&
+    jq -e --argjson wanted "$target_mode" \
+        'all(.[]; .mode == $wanted) and
+         ($wanted != 1 or all(.[]; .algorithmId == "dwindle-memory"))' \
+        >/dev/null <<<"$states"; then
     if [[ "$target_mode" -eq 0 ]]; then
         set_setting animationSequenceMode 1
         set_setting animationStaggerInterval 40
@@ -303,32 +302,54 @@ qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
     || fail "Could not begin the assignment update."
 
 batch_open=true
+guard_unloaded=false
 close_batch_on_error() {
     if [[ "$batch_open" == true ]]; then
         qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
             "$PZ_LAYOUT_IFACE.setSaveBatchMode" false >/dev/null 2>&1 || true
+    fi
+    if [[ "$guard_unloaded" == true ]]; then
+        reload_guard >/dev/null 2>&1 || true
     fi
 }
 trap close_batch_on_error EXIT
 
 while IFS= read -r state; do
     screen_id="$(jq -r '.screenId' <<<"$state")"
-    desktop="$(jq -r '.virtualDesktop' <<<"$state")"
     activity="$(jq -r '.activity // ""' <<<"$state")"
     snapping_layout="$(jq -r '.snappingLayoutId // ""' <<<"$state")"
     tiling_algorithm="$(jq -r '.algorithmId // ""' <<<"$state")"
 
     [[ -n "$snapping_layout" && "$snapping_layout" != "none" ]] \
         || snapping_layout="$BSP_LAYOUT_ID"
-    [[ -n "$tiling_algorithm" && "$tiling_algorithm" != "none" ]] \
-        || tiling_algorithm="dwindle"
+    if [[ "$target_mode" -eq 0 && -n "$fancy_layout_id" ]]; then
+        snapping_layout="$fancy_layout_id"
+    fi
+    if [[ "$target_mode" -eq 1 ]]; then
+        tiling_algorithm="dwindle-memory"
+    else
+        [[ -n "$tiling_algorithm" && "$tiling_algorithm" != "none" ]] \
+            || tiling_algorithm="dwindle-memory"
+    fi
 
-    qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
-        "$PZ_LAYOUT_IFACE.setAssignmentEntry" \
-        "$screen_id" "$desktop" "$activity" "$target_mode" \
-        "$snapping_layout" "$tiling_algorithm" >/dev/null \
-        || fail "Could not update $screen_id."
+    for desktop in 1 2 3 4; do
+        qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+            "$PZ_LAYOUT_IFACE.setAssignmentEntry" \
+            "$screen_id" "$desktop" "$activity" "$target_mode" \
+            "$snapping_layout" "$tiling_algorithm" >/dev/null \
+            || fail "Could not update $screen_id on desktop $desktop."
+    done
 done < <(jq -c '.[]' <<<"$states")
+
+# The loaded Omarchy controller still has its old synchronous mode cache at
+# this point. Unload it before FancyZones applies any geometry; otherwise it
+# restores the old tree while snap-all is painting the grid. It is reloaded
+# after reflow with a fresh passive-mode cache (and also by the error trap).
+if [[ "$target_mode" -eq 0 && -f "$GUARD_SCRIPT" ]]; then
+    qdbus6 org.kde.KWin /Scripting \
+        org.kde.kwin.Scripting.unloadScript "$GUARD_ID" >/dev/null 2>&1 || true
+    guard_unloaded=true
+fi
 
 qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
     "$PZ_LAYOUT_IFACE.applyAssignmentChanges" >/dev/null \
@@ -340,24 +361,16 @@ if [[ "$target_mode" -eq 0 ]]; then
 fi
 
 batch_open=false
-trap - EXIT
 
 wait_for_mode "$target_mode" \
     || fail "PlasmaZones did not converge to $mode_name."
 reflow_windows "$states"
 
-# Reload the guard after every mode change so its synchronous per-output cache
-# always matches the assignments that were just applied.
-if [[ -f "$GUARD_SCRIPT" ]]; then
-    qdbus6 org.kde.KWin /Scripting \
-        org.kde.kwin.Scripting.unloadScript "$GUARD_ID" >/dev/null 2>&1 || true
-    qdbus6 org.kde.KWin /Scripting \
-        org.kde.kwin.Scripting.loadScript "$GUARD_SCRIPT" "$GUARD_ID" >/dev/null \
-        || fail "Could not reload the Omarchy mouse guard."
-    qdbus6 org.kde.KWin /Scripting \
-        org.kde.kwin.Scripting.start >/dev/null \
-        || fail "Could not start the Omarchy mouse guard."
-fi
+# Reload after every mode change so the synchronous per-output cache matches
+# the assignments that were just applied.
+reload_guard || fail "Could not reload the Omarchy controller."
+guard_unloaded=false
+trap - EXIT
 
 notify-send --app-name="PlasmaZones" --icon=preferences-system-windows \
     "$mode_name" "$mode_detail"
