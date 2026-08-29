@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly ROOT
 
 bash -n "$ROOT/install.sh"
 bash -n "$ROOT/uninstall.sh"

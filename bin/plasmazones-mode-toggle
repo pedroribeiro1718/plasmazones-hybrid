@@ -104,9 +104,8 @@ set_setting() {
 
 wait_for_mode() {
     local wanted="$1"
-    local attempt
 
-    for attempt in {1..20}; do
+    for _ in {1..20}; do
         states="$(read_states)" || return 1
         if jq -e --argjson wanted "$wanted" \
             'all(.[]; .mode == $wanted)' >/dev/null <<<"$states"; then

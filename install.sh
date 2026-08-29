@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-readonly ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly ROOT
 readonly PZ_SERVICE="org.plasmazones"
 readonly PZ_OBJECT="/PlasmaZones"
 readonly LAYOUT_IFACE="org.plasmazones.LayoutRegistry"
