@@ -2,7 +2,7 @@
   "_version": 6,
   "id": "{c9d1ec53-b21a-4d4f-a5aa-9d035cc563d1}",
   "name": "Omarchy on KDE",
-  "description": "Omarchy-inspired keyboard tiling with DPI-safe limits, Super-based focus and swaps, fixed tiled windows, and a separate FancyZones snapping mode.",
+  "description": "Omarchy-inspired keyboard tiling with balanced BSP, DPI-safe limits, Super-based focus and swaps, fixed tiled windows, and a separate FancyZones snapping mode.",
   "parent": null,
   "config": {
     "Gaps": {
@@ -113,4 +113,3 @@
     "removedIds": []
   }
 }
-

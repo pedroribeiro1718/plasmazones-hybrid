@@ -34,7 +34,7 @@ The installation is user-local and never uses `sudo`. It backs up affected files
 | `Super+G` | Open the layout picker |
 | `Super+Shift+G` | Open the zone editor |
 
-In FancyZones, `Alt`-drag shows the overlay and `Ctrl+Alt`-drag spans adjacent zones. Omarchy chooses BSP for logical widths of at least 2200 pixels and Master + Stack for smaller logical workspaces.
+In FancyZones, `Alt`-drag shows the overlay and `Ctrl+Alt`-drag spans adjacent zones. Omarchy chooses BSP for logical widths of at least 2200 pixels and Master + Stack for smaller logical workspaces. BSP outputs are pinned to a balanced 50% split so three windows form one full-height tile plus two half-height tiles instead of three columns.
 
 Steam is floated only in Omarchy mode. Games are unaffected.
 New normal windows follow KWin's active-output placement. Per-monitor

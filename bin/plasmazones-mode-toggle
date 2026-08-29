@@ -113,6 +113,15 @@ active_output_rule_id() {
         "${digest:16:4}" "${digest:20:12}"
 }
 
+bsp_ratio_rule_id() {
+    local digest
+    digest="$(printf 'plasmazones-hybrid:bsp-ratio:%s' "$1" | sha256sum)"
+    digest="${digest%% *}"
+    printf '{%s-%s-%s-%s-%s}' \
+        "${digest:0:8}" "${digest:8:4}" "${digest:12:4}" \
+        "${digest:16:4}" "${digest:20:12}"
+}
+
 ensure_active_output_rules() {
     local current_states="$1"
     local all_rules screen_id rule_id rule_json
@@ -148,6 +157,41 @@ ensure_active_output_rules() {
     done < <(jq -r 'map(.screenId) | unique[]' <<<"$current_states")
 }
 
+ensure_bsp_ratio_rules() {
+    local current_states="$1"
+    local all_rules screen_id rule_id rule_json
+    all_rules="$(qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+        "$PZ_RULES_IFACE.getAllRules")" \
+        || fail "Could not read PlasmaZones rules."
+
+    while IFS= read -r screen_id; do
+        rule_id="$(bsp_ratio_rule_id "$screen_id")"
+        rule_json="$(jq -cn --arg id "$rule_id" --arg screen "$screen_id" '{
+            id: $id,
+            name: ("Keep Binary Split balanced on " + $screen),
+            enabled: true,
+            priority: 500,
+            match: {field: "screenId", op: "equals", value: $screen},
+            actions: [{type: "setSplitRatio", value: 0.5}]
+        }')"
+
+        if jq -e --argjson wanted "$rule_json" \
+            'any(.rules[]; . == $wanted)' >/dev/null <<<"$all_rules"; then
+            continue
+        fi
+        if jq -e --arg id "$rule_id" \
+            'any(.rules[]; .id == $id)' >/dev/null <<<"$all_rules"; then
+            qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+                "$PZ_RULES_IFACE.updateRule" "$rule_json" >/dev/null \
+                || fail "Could not update the balanced BSP ratio for $screen_id."
+        else
+            qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+                "$PZ_RULES_IFACE.addRule" "$rule_json" >/dev/null \
+                || fail "Could not add the balanced BSP ratio for $screen_id."
+        fi
+    done < <(jq -r '.[] | select(.algorithmId == "bsp") | .screenId' <<<"$current_states")
+}
+
 wait_for_mode() {
     local wanted="$1"
 
@@ -165,6 +209,12 @@ wait_for_mode() {
 reflow_windows() {
     local current_states="$1"
     local snapped_windows floating_windows
+
+    # A 60% BSP split on a 16:9 output leaves the first region wider than
+    # tall, so PlasmaZones splits it vertically again and produces three
+    # columns. Pin BSP outputs to 50% before every reflow; Master + Stack
+    # outputs retain their independent ratio and algorithm.
+    ensure_bsp_ratio_rules "$current_states"
 
     # applyAssignmentChanges performs PlasmaZones' preservation pass first.
     # Give its queued KWin geometries one short frame budget to drain, then

@@ -13,5 +13,6 @@ jq empty "$ROOT/rules/stable-geometry.json"
 jq empty "$ROOT/rules/float-steam.json"
 jq empty "$ROOT/profile/omarchy-on-kde-profile.json"
 grep -q '@EXEC@' "$ROOT/share/applications/plasmazones-mode-toggle.desktop.in"
+grep -q 'actions: \[{type: "setSplitRatio", value: 0.5}\]' "$ROOT/bin/plasmazones-mode-toggle"
 
 echo "Smoke tests passed."
