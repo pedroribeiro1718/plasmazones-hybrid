@@ -6,6 +6,7 @@ readonly PZ_SERVICE="org.plasmazones"
 readonly PZ_OBJECT="/PlasmaZones"
 readonly PZ_LAYOUT_IFACE="org.plasmazones.LayoutRegistry"
 readonly PZ_SETTINGS_IFACE="org.plasmazones.Settings"
+readonly PZ_RULES_IFACE="org.plasmazones.Rules"
 readonly PZ_SNAP_IFACE="org.plasmazones.Snap"
 readonly PZ_TILING_IFACE="org.plasmazones.Tiling"
 readonly PZ_TRACKING_IFACE="org.plasmazones.WindowTracking"
@@ -22,6 +23,7 @@ fail() {
 
 command -v qdbus6 >/dev/null || fail "qdbus6 is not installed."
 command -v jq >/dev/null || fail "jq is not installed."
+command -v sha256sum >/dev/null || fail "sha256sum is not installed."
 
 usage() {
     cat <<'EOF'
@@ -102,6 +104,50 @@ set_setting() {
         || fail "Could not set PlasmaZones option $1."
 }
 
+active_output_rule_id() {
+    local digest
+    digest="$(printf 'plasmazones-hybrid:%s' "$1" | sha256sum)"
+    digest="${digest%% *}"
+    printf '{%s-%s-%s-%s-%s}' \
+        "${digest:0:8}" "${digest:8:4}" "${digest:12:4}" \
+        "${digest:16:4}" "${digest:20:12}"
+}
+
+ensure_active_output_rules() {
+    local current_states="$1"
+    local all_rules screen_id rule_id rule_json
+    all_rules="$(qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+        "$PZ_RULES_IFACE.getAllRules")" \
+        || fail "Could not read PlasmaZones rules."
+
+    while IFS= read -r screen_id; do
+        rule_id="$(active_output_rule_id "$screen_id")"
+        rule_json="$(jq -cn --arg id "$rule_id" --arg screen "$screen_id" '{
+            id: $id,
+            name: ("Keep new windows on " + $screen),
+            enabled: true,
+            priority: 50,
+            match: {field: "screenId", op: "equals", value: $screen},
+            actions: [{type: "routeToScreen", targetScreenId: $screen}]
+        }')"
+
+        if jq -e --argjson wanted "$rule_json" \
+            'any(.rules[]; . == $wanted)' >/dev/null <<<"$all_rules"; then
+            continue
+        fi
+        if jq -e --arg id "$rule_id" \
+            'any(.rules[]; .id == $id)' >/dev/null <<<"$all_rules"; then
+            qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+                "$PZ_RULES_IFACE.updateRule" "$rule_json" >/dev/null \
+                || fail "Could not update active-output routing for $screen_id."
+        else
+            qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+                "$PZ_RULES_IFACE.addRule" "$rule_json" >/dev/null \
+                || fail "Could not add active-output routing for $screen_id."
+        fi
+    done < <(jq -r 'map(.screenId) | unique[]' <<<"$current_states")
+}
+
 wait_for_mode() {
     local wanted="$1"
 
@@ -170,6 +216,12 @@ if [[ "$target_mode" -eq -1 ]]; then
         "$mode_name" "$mode_detail"
     exit 0
 fi
+
+# A same-screen RouteToScreen directive tells PlasmaZones that KWin's initial
+# placement is intentional. This suppresses historical cross-monitor session
+# reclaim while still allowing higher-priority app routing. Do not pair this
+# rule with Mode: PlasmaZones' cached open-routing query does not stamp it.
+ensure_active_output_rules "$states"
 
 # Omarchy applies every geometry in a retile together. FancyZones restores
 # the cascade used by the drag/snap UI. The 10 ms value is PlasmaZones' lower

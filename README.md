@@ -37,6 +37,9 @@ The installation is user-local and never uses `sudo`. It backs up affected files
 In FancyZones, `Alt`-drag shows the overlay and `Ctrl+Alt`-drag spans adjacent zones. Omarchy chooses BSP for logical widths of at least 2200 pixels and Master + Stack for smaller logical workspaces.
 
 Steam is floated only in Omarchy mode. Games are unaffected.
+New normal windows follow KWin's active-output placement. Per-monitor
+self-routing rules prevent PlasmaZones' historical placement restore from
+pulling them onto another output; higher-priority app rules still win.
 Applications that cannot fit inside a single FancyZone, such as the Steam
 client at its minimum size, remain unconstrained and can be spanned manually.
 

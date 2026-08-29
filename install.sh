@@ -23,7 +23,7 @@ fail() {
     exit 1
 }
 
-for command_name in qdbus6 jq flock install sed kwriteconfig6 kreadconfig6 kbuildsycoca6; do
+for command_name in qdbus6 jq flock install sed sha256sum kwriteconfig6 kreadconfig6 kbuildsycoca6; do
     command -v "$command_name" >/dev/null || fail "$command_name is required."
 done
 
@@ -193,10 +193,9 @@ set_setting autotileRetileShortcut 'Meta+Ctrl+T'
 # per-screen mode cycle so one key press cannot run both implementations.
 set_setting autotileToggleShortcut ''
 
-upsert_rule() {
-    local rule_file="$1"
-    local rule_json rule_id all_rules
-    rule_json="$(jq -c . "$rule_file")"
+upsert_rule_json() {
+    local rule_json="$1"
+    local rule_id all_rules
     rule_id="$(jq -r .id <<<"$rule_json")"
     all_rules="$(qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" "$RULES_IFACE.getAllRules")"
     if jq -e --arg id "$rule_id" 'any(.rules[]; .id == $id)' >/dev/null <<<"$all_rules"; then
@@ -206,8 +205,41 @@ upsert_rule() {
     fi
 }
 
+upsert_rule() {
+    local rule_json
+    rule_json="$(jq -c . "$1")"
+    upsert_rule_json "$rule_json"
+}
+
+active_output_rule_id() {
+    local digest
+    digest="$(printf 'plasmazones-hybrid:%s' "$1" | sha256sum)"
+    digest="${digest%% *}"
+    printf '{%s-%s-%s-%s-%s}' \
+        "${digest:0:8}" "${digest:8:4}" "${digest:12:4}" \
+        "${digest:16:4}" "${digest:20:12}"
+}
+
+upsert_active_output_rule() {
+    local screen_id="$1"
+    local rule_id rule_json
+    rule_id="$(active_output_rule_id "$screen_id")"
+    rule_json="$(jq -cn --arg id "$rule_id" --arg screen "$screen_id" '{
+        id: $id,
+        name: ("Keep new windows on " + $screen),
+        enabled: true,
+        priority: 50,
+        match: {field: "screenId", op: "equals", value: $screen},
+        actions: [{type: "routeToScreen", targetScreenId: $screen}]
+    }')"
+    upsert_rule_json "$rule_json"
+}
+
 upsert_rule "$ROOT/rules/stable-geometry.json"
 upsert_rule "$ROOT/rules/float-steam.json"
+while IFS= read -r screen_id; do
+    upsert_active_output_rule "$screen_id"
+done < <(jq -r 'map(.screenId) | unique[]' <<<"$states_before")
 
 qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" "$LAYOUT_IFACE.setSaveBatchMode" true >/dev/null
 while IFS= read -r state; do
