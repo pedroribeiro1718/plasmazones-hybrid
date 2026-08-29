@@ -15,8 +15,22 @@ const SCREEN_INTERFACE = "org.plasmazones.Screen";
 const LAYOUT_INTERFACE = "org.plasmazones.LayoutRegistry";
 const TRACKING_INTERFACE = "org.plasmazones.WindowTracking";
 const DRAG_INTERFACE = "org.plasmazones.WindowDrag";
+const SNAP_INTERFACE = "org.plasmazones.Snap";
 const TILING_INTERFACE = "org.plasmazones.Tiling";
 const OMARCHY_MODE = 1;
+
+// The bundled FancyZones layout is a fixed 3x2 grid. These UUIDs are stable
+// because install/upgrade imports the repository layout verbatim.
+const FANCY_ZONE_IDS = [
+    "{59f32c55-7885-4ddd-8cb2-c1ea89cd0ddb}",
+    "{847063ba-5236-4c33-93b0-e3b9f8cba4ab}",
+    "{7b8c36a1-d342-43f3-a881-a2e2e45ff2c1}",
+    "{e3d511fc-7d74-44e7-a875-3d790ec644bc}",
+    "{0fac9b8a-903a-439f-bbaf-dcc5671cc36f}",
+    "{09292138-0c49-4382-a791-5394c28f8b34}"
+];
+const FANCY_OUTER_GAP = 12;
+const FANCY_INNER_GAP = 8;
 
 const attachedWindows = new Map();
 const gestures = new Map();
@@ -65,6 +79,235 @@ function isTilingCandidate(window) {
         !window.skipTaskbar && !window.skipSwitcher &&
         !window.popupWindow && !window.dialog && !window.modal &&
         !window.transient);
+}
+
+function isOnCurrentDesktop(window) {
+    if (window.onAllDesktops) {
+        return true;
+    }
+    return window.desktops && window.desktops.some(function (desktop) {
+        return desktop === workspace.currentDesktop;
+    });
+}
+
+function fancyPartitions(windowCount) {
+    const z = FANCY_ZONE_IDS;
+    if (windowCount <= 1) {
+        return [[z[0], z[1], z[2], z[3], z[4], z[5]]];
+    }
+    if (windowCount === 2) {
+        // A 3-column grid cannot split into equal vertical halves. Prefer a
+        // pragmatic browser-friendly 2/3 + 1/3 split over two short rows.
+        return [[z[0], z[1], z[3], z[4]], [z[2], z[5]]];
+    }
+    if (windowCount === 3) {
+        return [[z[0], z[3]], [z[1], z[4]], [z[2], z[5]]];
+    }
+    if (windowCount === 4) {
+        return [[z[0], z[3]], [z[1], z[2]], [z[4]], [z[5]]];
+    }
+    if (windowCount === 5) {
+        return [[z[0], z[3]], [z[1]], [z[2]], [z[4]], [z[5]]];
+    }
+
+    // Six cells are the hard budget. Extra windows intentionally stack in a
+    // round-robin zone instead of creating geometry outside the grid.
+    const partitions = [];
+    for (let index = 0; index < windowCount; index++) {
+        partitions.push([z[index % z.length]]);
+    }
+    return partitions;
+}
+
+function fancyZoneRect(output, zoneIndex) {
+    const screen = output.geometry;
+    const halfGap = FANCY_INNER_GAP / 2;
+    const column = zoneIndex % 3;
+    const row = Math.floor(zoneIndex / 3);
+    const left = column === 0 ? screen.x + FANCY_OUTER_GAP :
+        Math.round(screen.x + screen.width * column / 3 + halfGap);
+    const right = column === 2 ?
+        screen.x + screen.width - FANCY_OUTER_GAP :
+        Math.round(screen.x + screen.width * (column + 1) / 3 - halfGap);
+    const top = row === 0 ? screen.y + FANCY_OUTER_GAP :
+        Math.round(screen.y + screen.height / 2 + halfGap);
+    const bottom = row === 1 ?
+        screen.y + screen.height - FANCY_OUTER_GAP :
+        Math.round(screen.y + screen.height / 2 - halfGap);
+    return {x: left, y: top, width: right - left, height: bottom - top};
+}
+
+function fancyPartitionRect(output, zoneIds) {
+    const indexes = zoneIds.map(function (zoneId) {
+        return FANCY_ZONE_IDS.indexOf(zoneId);
+    });
+    const rects = indexes.map(function (index) {
+        return fancyZoneRect(output, index);
+    });
+    const left = Math.min.apply(null, rects.map(function (rect) {
+        return rect.x;
+    }));
+    const top = Math.min.apply(null, rects.map(function (rect) {
+        return rect.y;
+    }));
+    const right = Math.max.apply(null, rects.map(function (rect) {
+        return rect.x + rect.width;
+    }));
+    const bottom = Math.max.apply(null, rects.map(function (rect) {
+        return rect.y + rect.height;
+    }));
+    return {x: left, y: top, width: right - left, height: bottom - top};
+}
+
+function expandFancyPartitionForMinimum(output, zoneIds, window) {
+    const indexes = zoneIds.map(function (zoneId) {
+        return FANCY_ZONE_IDS.indexOf(zoneId);
+    });
+    const minSize = window.minSize || {width: 0, height: 0};
+    let geometry = fancyPartitionRect(output, zoneIds);
+
+    if (Number(minSize.height || 0) > geometry.height) {
+        indexes.slice().forEach(function (index) {
+            const counterpart = index < 3 ? index + 3 : index - 3;
+            if (indexes.indexOf(counterpart) < 0) {
+                indexes.push(counterpart);
+            }
+        });
+    }
+
+    geometry = fancyPartitionRect(output, indexes.map(function (index) {
+        return FANCY_ZONE_IDS[index];
+    }));
+    while (Number(minSize.width || 0) > geometry.width) {
+        const columns = indexes.map(function (index) { return index % 3; });
+        const minColumn = Math.min.apply(null, columns);
+        const maxColumn = Math.max.apply(null, columns);
+        let targetColumn;
+        if (maxColumn < 2) {
+            targetColumn = maxColumn + 1;
+        } else if (minColumn > 0) {
+            targetColumn = minColumn - 1;
+        } else {
+            break;
+        }
+        const rows = Array.from(new Set(indexes.map(function (index) {
+            return Math.floor(index / 3);
+        })));
+        rows.forEach(function (row) {
+            const index = row * 3 + targetColumn;
+            if (indexes.indexOf(index) < 0) {
+                indexes.push(index);
+            }
+        });
+        geometry = fancyPartitionRect(output, indexes.map(function (index) {
+            return FANCY_ZONE_IDS[index];
+        }));
+    }
+
+    return indexes.sort(function (a, b) { return a - b; }).map(
+        function (index) { return FANCY_ZONE_IDS[index]; });
+}
+
+function applyFancyAdaptiveReflow(outputs) {
+    const entries = [];
+
+    outputs.forEach(function (output) {
+        const screenId = screenIdsByConnector.get(String(output.name));
+        if (screenId === undefined) {
+            return;
+        }
+        const windows = workspace.windowList().filter(function (window) {
+            return isTilingCandidate(window) && isOnCurrentDesktop(window) &&
+                window.output === output && window !== scratchpadWindow;
+        }).sort(function (a, b) {
+            const aMin = a.minSize || {width: 0, height: 0};
+            const bMin = b.minSize || {width: 0, height: 0};
+            const minimumAreaDelta = Number(bMin.width || 0) *
+                Number(bMin.height || 0) - Number(aMin.width || 0) *
+                Number(aMin.height || 0);
+            if (minimumAreaDelta !== 0) {
+                return minimumAreaDelta;
+            }
+            const ar = a.frameGeometry;
+            const br = b.frameGeometry;
+            return ar.y - br.y || ar.x - br.x ||
+                String(a.internalId).localeCompare(String(b.internalId));
+        });
+        const partitions = fancyPartitions(windows.length);
+        windows.forEach(function (window, index) {
+            const zoneIds = expandFancyPartitionForMinimum(output,
+                partitions[index], window);
+            const geometry = fancyPartitionRect(output, zoneIds);
+            entries.push({
+                windowId: plasmaZonesWindowId(window),
+                sourceZoneId: "",
+                targetZoneId: zoneIds[0],
+                targetZoneIds: zoneIds,
+                x: geometry.x,
+                y: geometry.y,
+                width: geometry.width,
+                height: geometry.height,
+                targetScreenId: String(screenId),
+                virtualDesktop: desktopNumber(window)
+            });
+        });
+    });
+
+    if (entries.length === 0) {
+        log("FancyZones adaptive reflow found no visible windows");
+        return;
+    }
+    callDBus(SERVICE, OBJECT, SNAP_INTERFACE, "handleBatchedResnap",
+        JSON.stringify(entries), function () {
+            // Reassert the public snap contract after the compositor has
+            // accepted the batch. Windows handed off by Omarchy were marked
+            // floating so PlasmaZones' own autotiler could not race the local
+            // tree; the explicit commits clear that handoff state and retain
+            // every multi-zone span for later drag/navigation operations.
+            entries.forEach(function (entry) {
+                if (entry.targetZoneIds.length > 1) {
+                    callDBus(SERVICE, OBJECT, SNAP_INTERFACE,
+                        "windowSnappedMultiZone", entry.windowId,
+                        entry.targetZoneIds, entry.targetScreenId,
+                        function () {});
+                } else {
+                    callDBus(SERVICE, OBJECT, SNAP_INTERFACE,
+                        "windowSnapped", entry.windowId,
+                        entry.targetZoneId, entry.targetScreenId,
+                        function () {});
+                }
+            });
+            log("FancyZones adaptive reflow placed " + entries.length +
+                " visible windows");
+        });
+}
+
+function requestFancyAdaptiveReflow() {
+    const outputs = Array.from(workspace.screenOrder);
+    let pending = outputs.length;
+    if (pending === 0) {
+        return;
+    }
+    const identityResolved = function () {
+        pending--;
+        if (pending === 0) {
+            applyFancyAdaptiveReflow(outputs);
+        }
+    };
+    outputs.forEach(function (output) {
+        const connector = String(output.name);
+        if (screenIdsByConnector.has(connector)) {
+            identityResolved();
+            return;
+        }
+        callDBus(SERVICE, OBJECT, SCREEN_INTERFACE, "getScreenId", connector,
+            function (screenId) {
+                if (screenId) {
+                    screenIdsByConnector.set(connector, String(screenId));
+                }
+                identityResolved();
+            });
+    });
 }
 
 function leaf(window) {
@@ -811,6 +1054,11 @@ function registerOmarchyShortcuts() {
         sendFocusedToScratchpad);
     registerShortcut("PZH Toggle Float", "Toggle focused window floating",
         "Meta+T", toggleFocusedFloat);
+    // Internal action invoked by plasmazones-mode-toggle after the mode and
+    // layout assignment have converged. It intentionally has no user key.
+    registerShortcut("PZH Fancy Adaptive Reflow",
+        "Distribute visible windows across the FancyZones grid", "",
+        requestFancyAdaptiveReflow);
 }
 
 function desktopNumber(window) {

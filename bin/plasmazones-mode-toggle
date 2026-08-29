@@ -245,14 +245,15 @@ reflow_windows() {
         # each zone, preserving the window's current physical output.
     fi
 
-    while IFS= read -r screen_id; do
-        qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
-            "$PZ_SNAP_IFACE.snapAllWindows" "$screen_id" >/dev/null \
-            || fail "Could not arrange the FancyZones output $screen_id."
-    done < <(jq -r '.[] | select(.mode == 0) | .screenId' <<<"$current_states")
+    if jq -e 'any(.[]; .mode == 0)' >/dev/null <<<"$current_states"; then
+        qdbus6 org.kde.kglobalaccel /component/kwin \
+            org.kde.kglobalaccel.Component.invokeShortcut \
+            "PZH Fancy Adaptive Reflow" >/dev/null \
+            || fail "Could not request the adaptive FancyZones reflow."
+    fi
 
-    # snapAllWindows is asynchronous inside the KWin effect. Keep the process
-    # lock briefly so a rapid second shortcut cannot overlap its batch.
+    # The controller's batch is asynchronous inside the KWin effect. Keep the
+    # process lock briefly so a rapid second shortcut cannot overlap it.
     sleep 0.25
 }
 
@@ -364,11 +365,25 @@ batch_open=false
 
 wait_for_mode "$target_mode" \
     || fail "PlasmaZones did not converge to $mode_name."
+
+# Fancy reflow is implemented by the KWin controller because only KWin has a
+# reliable list of visible windows and their physical outputs. Reload it first
+# after a mode change so the internal no-key action is available.
+if [[ "$target_mode" -eq 0 ]]; then
+    reload_guard || fail "Could not reload the controller for FancyZones reflow."
+    guard_unloaded=false
+fi
+# Reflow must consume the effective post-switch state. Passing the snapshot
+# from before applyAssignmentChanges made the first FancyZones transition run
+# the Omarchy branch and only work on a second invocation.
+states="$(read_states)" || fail "Could not refresh mode state before reflow."
 reflow_windows "$states"
 
 # Reload after every mode change so the synchronous per-output cache matches
 # the assignments that were just applied.
-reload_guard || fail "Could not reload the Omarchy controller."
+if [[ "$target_mode" -ne 0 ]]; then
+    reload_guard || fail "Could not reload the Omarchy controller."
+fi
 guard_unloaded=false
 trap - EXIT
 

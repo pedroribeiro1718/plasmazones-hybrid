@@ -17,4 +17,4 @@ jobs:
       - name: Smoke test
         run: ./tests/smoke.sh
       - name: ShellCheck
-        run: shellcheck install.sh upgrade.sh uninstall.sh bin/plasmazones-mode-toggle tests/smoke.sh tests/live-coverage.sh
+        run: shellcheck install.sh upgrade.sh uninstall.sh bin/plasmazones-mode-toggle tests/smoke.sh tests/live-coverage.sh tests/live-fancy-coverage.sh

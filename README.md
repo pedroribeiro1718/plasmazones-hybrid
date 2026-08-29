@@ -43,14 +43,14 @@ The installation is user-local and never uses `sudo`. It backs up affected files
 | `Super+G` | Open the layout picker |
 | `Super+Shift+G` | Open the zone editor |
 
-In FancyZones, `Alt`-drag shows the overlay and `Ctrl+Alt`-drag spans adjacent zones. In Omarchy, the KWin controller owns a balanced binary tree while PlasmaZones supplies mode/rule integration. New windows split the largest tile; removing or structurally moving one collapses its old branch immediately. Hidden, minimized, utility, popup, and dialog windows never reserve a tile. Resize steps use each output's logical geometry, so mixed DPI/scaling does not produce wildly different physical movements.
+In FancyZones, `Alt`-drag shows the overlay and `Ctrl+Alt`-drag spans adjacent zones. A mode switch uses the whole 3×2 grid: up to six windows partition all six cells; additional windows stack onto zones round-robin. A client whose minimum size exceeds one cell automatically spans adjacent cells. All geometry is calculated per output in logical coordinates, including mixed-DPI setups.
+
+In Omarchy, the KWin controller owns a balanced binary tree while PlasmaZones supplies mode/rule integration. New windows split the largest tile; removing or structurally moving one collapses its old branch immediately. Hidden, minimized, utility, popup, and dialog windows never reserve a tile.
 
 Steam is floated only in Omarchy mode. Games are unaffected.
 New normal windows follow KWin's active-output placement. Per-monitor
 self-routing rules prevent PlasmaZones' historical placement restore from
 pulling them onto another output; higher-priority app rules still win.
-Applications that cannot fit inside a single FancyZone, such as the Steam
-client at its minimum size, remain unconstrained and can be spanned manually.
 
 After pulling an update, run `./install.sh` again. It upgrades in place while
 preserving the original rollback snapshot used by `./uninstall.sh`.
@@ -68,11 +68,11 @@ The uninstaller restores the captured PlasmaZones settings, rules, assignments, 
 ```bash
 ./tests/smoke.sh
 ./tests/live-coverage.sh 5   # run inside a live Omarchy session
+./tests/live-fancy-coverage.sh 5  # run inside a live FancyZones session
 ```
 
-The live check samples every output and fails on large uncovered cells,
-overlap, or incomplete work-area bounds. Run it after insertion, close,
-structural move, and mode-transition tests—not only after the final state has
-settled.
+The live checks sample every output. Omarchy fails on uncovered cells,
+overlap, or incomplete bounds; FancyZones fails on empty zones or windows
+outside the grid. Run both around mode-transition tests.
 
 MIT licensed.
