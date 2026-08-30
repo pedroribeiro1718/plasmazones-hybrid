@@ -43,7 +43,9 @@ const controllerManaged = new Map();
 const userFloated = new Map();
 const treesByContext = new Map();
 const closingWindows = new Map();
+const openedOrder = new Map();
 let nextGeneration = 1;
+let nextOpenedOrder = 1;
 let scratchpadWindow = null;
 let applyingControllerGeometry = false;
 let lastFocusedWindow = workspace.activeWindow;
@@ -449,6 +451,64 @@ function removeWindowFromTree(node, window) {
     return node;
 }
 
+function oldestLeaf(node) {
+    const leaves = [];
+    collectLeaves(node, leaves);
+    if (leaves.length === 0) {
+        return null;
+    }
+    leaves.sort(function (a, b) {
+        return Number(openedOrder.get(a.window) || Number.MAX_SAFE_INTEGER) -
+            Number(openedOrder.get(b.window) || Number.MAX_SAFE_INTEGER);
+    });
+    return leaves[0];
+}
+
+// Removing a leaf from a conventional BSP promotes its complete sibling
+// subtree. That is compact, but it also destroys the visual role of the
+// vacated tile. For close/minimize/hide, keep the parent split whenever the
+// sibling contains multiple leaves: promote its oldest window into the empty
+// side and collapse only the smaller sibling subtree. Structural moves still
+// use removeWindowFromTree() so an explicit rearrangement remains direct.
+function removeWindowPreservingShape(node, window) {
+    if (!node) {
+        return null;
+    }
+    if (isLeaf(node)) {
+        return node.window === window ? null : node;
+    }
+
+    if (treeContainsWindow(node.first, window)) {
+        node.first = removeWindowPreservingShape(node.first, window);
+        if (!node.first) {
+            if (node.second && !isLeaf(node.second)) {
+                const promoted = oldestLeaf(node.second);
+                node.second = removeWindowFromTree(node.second,
+                    promoted.window);
+                node.first = promoted;
+                return node;
+            }
+            return node.second;
+        }
+        return node;
+    }
+
+    if (treeContainsWindow(node.second, window)) {
+        node.second = removeWindowPreservingShape(node.second, window);
+        if (!node.second) {
+            if (node.first && !isLeaf(node.first)) {
+                const promoted = oldestLeaf(node.first);
+                node.first = removeWindowFromTree(node.first,
+                    promoted.window);
+                node.second = promoted;
+                return node;
+            }
+            return node.first;
+        }
+    }
+    return node;
+}
+
 function treeContainsWindow(node, window) {
     if (!node) {
         return false;
@@ -774,7 +834,7 @@ function closeFocused() {
     const key = controllerManaged.get(window);
     if (key) {
         treesByContext.set(key,
-            removeWindowFromTree(treesByContext.get(key), window));
+            removeWindowPreservingShape(treesByContext.get(key), window));
         controllerManaged.delete(window);
         closingWindows.set(window, true);
         applyControllerTree(key, window.output);
@@ -1313,6 +1373,9 @@ function attach(window) {
         return;
     }
     attachedWindows.set(window, true);
+    if (!openedOrder.has(window)) {
+        openedOrder.set(window, nextOpenedOrder++);
+    }
     const insertionTarget = lastFocusedWindow || workspace.activeWindow;
     const adoptedAtFocus = adoptWindowAtFocusedLeaf(window, insertionTarget);
     if (!adoptedAtFocus && windowIsInOmarchy(window)) {
@@ -1370,7 +1433,8 @@ function attach(window) {
         if (!isTilingCandidate(window)) {
             if (key) {
                 treesByContext.set(key,
-                    removeWindowFromTree(treesByContext.get(key), window));
+                    removeWindowPreservingShape(treesByContext.get(key),
+                        window));
                 controllerManaged.delete(window);
                 applyControllerTree(key, window.output);
             }
@@ -1379,8 +1443,9 @@ function attach(window) {
         if (!key && !closingWindows.has(window) &&
                 window !== scratchpadWindow && !userFloated.has(window) &&
                 !isRuleFloated(window) && windowIsInOmarchy(window)) {
-            if (!adoptWindowAtFocusedLeaf(window, insertionTarget)) {
-                adoptOmarchyWindows(insertionTarget);
+            const currentTarget = lastFocusedWindow || workspace.activeWindow;
+            if (!adoptWindowAtFocusedLeaf(window, currentTarget)) {
+                adoptOmarchyWindows(currentTarget);
             }
         }
     };
@@ -1396,7 +1461,8 @@ function attach(window) {
         const managedKey = controllerManaged.get(window);
         if (managedKey) {
             treesByContext.set(managedKey,
-                removeWindowFromTree(treesByContext.get(managedKey), window));
+                removeWindowPreservingShape(treesByContext.get(managedKey),
+                    window));
             controllerManaged.delete(window);
             applyControllerTree(managedKey, window.output);
         }
@@ -1404,6 +1470,7 @@ function attach(window) {
         horizontallyMaximized.delete(window);
         pendingTreeRestore.delete(window);
         closingWindows.delete(window);
+        openedOrder.delete(window);
         attachedWindows.delete(window);
         if (scratchpadWindow === window) {
             scratchpadWindow = null;

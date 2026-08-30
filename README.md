@@ -45,7 +45,7 @@ The installation is user-local and never uses `sudo`. It backs up affected files
 
 In FancyZones, `Alt`-drag shows the overlay and `Ctrl+Alt`-drag spans adjacent zones. A mode switch uses the whole 3×2 grid: up to six windows partition all six cells; additional windows stack onto zones round-robin. A client whose minimum size exceeds one cell automatically spans adjacent cells. All geometry is calculated per output in logical coordinates, including mixed-DPI setups.
 
-In Omarchy, the KWin controller owns a dwindle tree while PlasmaZones supplies mode/rule integration. A new window follows and splits the focused tile, including its monitor (wide tiles split left/right; tall tiles split top/bottom), falling back to the largest tile only when no managed window is focused. Removing or structurally moving a window collapses its old branch immediately. Hidden, minimized, utility, popup, and dialog windows never reserve a tile. Auto-hide docks overlay tiles without reducing usable desktop space.
+In Omarchy, the KWin controller owns a dwindle tree while PlasmaZones supplies mode/rule integration. A new window follows and splits the focused tile, including its monitor (wide tiles split left/right; tall tiles split top/bottom), falling back to the largest tile only when no managed window is focused. When a window closes, minimizes, or hides, the oldest leaf in its sibling subtree takes over the vacated tile; explicit structural moves use ordinary BSP collapse. Utility, popup, and dialog windows never reserve a tile. Auto-hide docks overlay tiles without reducing usable desktop space.
 
 Steam is floated only in Omarchy mode. Games are unaffected.
 New normal windows follow KWin's active-output placement. Per-monitor
@@ -68,6 +68,7 @@ The uninstaller restores the captured PlasmaZones settings, rules, assignments, 
 ```bash
 ./tests/smoke.sh
 ./tests/live-coverage.sh 5   # run inside a live Omarchy session
+./tests/live-stable-removal.sh  # isolated close/minimize promotion test
 ./tests/live-fancy-coverage.sh 5  # run inside a live FancyZones session
 ```
 

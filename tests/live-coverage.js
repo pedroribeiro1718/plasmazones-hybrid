@@ -6,11 +6,15 @@ function appId(window) {
 }
 
 function candidate(window) {
+    const onDesktop = window && (window.onAllDesktops ||
+        (window.desktops && window.desktops.some(desktop =>
+            desktop === workspace.currentDesktop)));
     return Boolean(window && window.normalWindow && window.managed &&
         !window.minimized && !window.hidden && !window.deleted &&
         !window.skipTaskbar && !window.skipSwitcher &&
         !window.popupWindow && !window.dialog && !window.modal &&
-        !window.transient && appId(window).indexOf("steam") < 0);
+        !window.transient && onDesktop &&
+        appId(window).indexOf("steam") < 0);
 }
 
 function uniqueSorted(values) {
