@@ -44,7 +44,9 @@ grep -q '"invokeShortcut", action' "$ROOT/kwin/plasmazones-omarchy-lock/contents
 grep -q 'GLOBAL_ACCEL_OBJECT = "/component/plasmazonesd"' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'geometriesMatch' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'remove_active_output_rules' "$ROOT/bin/plasmazones-mode-toggle"
-! grep -q 'upsert_active_output_rule' "$ROOT/install.sh"
+if grep -q 'upsert_active_output_rule' "$ROOT/install.sh"; then
+    exit 1
+fi
 grep -q 'outputForContextKey' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'keepAbove = false' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'PZH Fancy Adaptive Reflow' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
