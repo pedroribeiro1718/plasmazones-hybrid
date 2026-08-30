@@ -43,6 +43,7 @@ const floatingWindows = new Map();
 const horizontallyMaximized = new Map();
 const pendingTreeRestore = new Map();
 const pendingScreenTransfers = new Map();
+const pendingWindowAdoptions = new Map();
 const controllerManaged = new Map();
 const userFloated = new Map();
 const treesByContext = new Map();
@@ -729,6 +730,8 @@ function adoptOmarchyWindows(preferredTarget) {
         if (!isTilingCandidate(window) ||
                 window === scratchpadWindow || userFloated.has(window) ||
                 isRuleFloated(window) ||
+                pendingScreenTransfers.has(window) ||
+                pendingWindowAdoptions.has(window) ||
                 !windowIsInOmarchy(window)) {
             return;
         }
@@ -770,6 +773,10 @@ function adoptOmarchyWindows(preferredTarget) {
 }
 
 function adoptWindowAtFocusedLeaf(window, focusedWindow) {
+    if (pendingScreenTransfers.has(window) ||
+            pendingWindowAdoptions.has(window)) {
+        return true;
+    }
     if (!isTilingCandidate(window) || !focusedWindow ||
             !controllerManaged.has(focusedWindow) ||
             !windowIsInOmarchy(focusedWindow) ||
@@ -785,21 +792,50 @@ function adoptWindowAtFocusedLeaf(window, focusedWindow) {
         return false;
     }
 
-    if (!treeContainsWindow(treesByContext.get(key), window)) {
-        treesByContext.set(key, insertWindowAtFocusedLeaf(
-            treesByContext.get(key), window, focusedWindow));
+    if (window.output !== output) {
+        return beginNewWindowScreenAdoption(window, focusedWindow, key,
+            output, screenId);
     }
-    controllerManaged.set(window, key);
+
+    // Do not expose the leaf to either geometry engine until PlasmaZones has
+    // acknowledged the floating handoff. Applying our tree first lets a
+    // queued native autotile request fight the controller for several frames.
+    pendingWindowAdoptions.set(window, {
+        focusedWindow: focusedWindow,
+        key: key,
+        output: output,
+        screenId: String(screenId)
+    });
     window.keepAbove = false;
-    applyControllerTree(key, output);
     callDBus(SERVICE, OBJECT, TRACKING_INTERFACE,
         "setWindowFloatingForScreen", plasmaZonesWindowId(window),
         String(screenId), true, function () {
+            const adoption = pendingWindowAdoptions.get(window);
+            if (!adoption) {
+                return;
+            }
+            pendingWindowAdoptions.delete(window);
+            if (!isTilingCandidate(window) || window.deleted ||
+                    modesByContext.get(adoption.key) !== OMARCHY_MODE) {
+                return;
+            }
+            if (!treeContainsWindow(treesByContext.get(adoption.key),
+                    window)) {
+                treesByContext.set(adoption.key, insertWindowAtFocusedLeaf(
+                    treesByContext.get(adoption.key), window,
+                    adoption.focusedWindow));
+            }
+            controllerManaged.set(window, adoption.key);
+            window.keepAbove = false;
             applyControllerTree(key, output);
+            log("completed same-output adoption of " +
+                plasmaZonesWindowId(window) + " at focused leaf " +
+                plasmaZonesWindowId(adoption.focusedWindow) + " on " +
+                String(adoption.output.name));
         });
-    log("inserted " + plasmaZonesWindowId(window) +
-        " at focused leaf " + plasmaZonesWindowId(focusedWindow) +
-        " on " + String(output.name));
+    log("prepared same-output adoption of " + plasmaZonesWindowId(window) +
+        " at focused leaf " + plasmaZonesWindowId(focusedWindow) + " on " +
+        String(output.name));
     return true;
 }
 
@@ -1173,6 +1209,62 @@ function directionalOutput(sourceOutput, direction) {
     return best;
 }
 
+function directionBetweenOutputs(sourceOutput, targetOutput) {
+    const directions = ["left", "right", "up", "down"];
+    for (let index = 0; index < directions.length; index++) {
+        if (directionalOutput(sourceOutput, directions[index]) ===
+                targetOutput) {
+            return directions[index];
+        }
+    }
+    return "";
+}
+
+function beginNewWindowScreenAdoption(window, focusedWindow, targetKey,
+        targetOutput, targetScreenId) {
+    const sourceOutput = window.output;
+    const sourceScreenId = screenIdsByConnector.get(
+        String(sourceOutput ? sourceOutput.name : ""));
+    const direction = directionBetweenOutputs(sourceOutput, targetOutput);
+    if (!sourceOutput || sourceScreenId === undefined || !direction) {
+        log("could not prepare cross-output adoption of " +
+            plasmaZonesWindowId(window) + ": source identity or direction " +
+            "is unavailable");
+        return false;
+    }
+
+    // New clients can be initially mapped on a different output from the
+    // focused leaf. Use the same native PlasmaZones handoff as an explicit
+    // keyboard transfer; assigning destination geometry directly synthesizes
+    // close/open events without an expected-output marker and can start an
+    // endless cross-screen restore loop for repeated app IDs such as Konsole.
+    pendingScreenTransfers.set(window, {
+        sourceOutput: sourceOutput,
+        targetOutput: targetOutput,
+        sourceScreenId: String(sourceScreenId),
+        targetScreenId: String(targetScreenId),
+        targetKey: targetKey,
+        targetMode: OMARCHY_MODE,
+        direction: direction,
+        oldKey: undefined,
+        needsManagedDestination: true,
+        moveRequested: false,
+        trackingRequested: false,
+        trackingReady: false,
+        sourceTrackingRequested: false,
+        sourceTrackingReady: false,
+        adoptionTarget: focusedWindow
+    });
+    workspace.activeWindow = window;
+    log("prepared cross-output adoption of " +
+        plasmaZonesWindowId(window) + " " + direction + " from " +
+        String(sourceOutput.name) + " to focused leaf " +
+        plasmaZonesWindowId(focusedWindow) + " on " +
+        String(targetOutput.name));
+    armPendingScreenTransfer(window);
+    return true;
+}
+
 function moveFocusedToScreen(direction) {
     const window = workspace.activeWindow;
     if (!isTilingCandidate(window) || window.fullScreen || !window.output) {
@@ -1251,6 +1343,28 @@ function armPendingScreenTransfer(window) {
         return;
     }
 
+    // windowAdded reaches KWin before PlasmaZones' asynchronous windowOpened
+    // callback. An explicit transfer is already tracked, but a brand-new
+    // adoption is not. Seed it as floating on its actual source first;
+    // otherwise the following unfloat is a no-op and the native navigation
+    // shortcut has no window to move.
+    if (transfer.adoptionTarget && !transfer.sourceTrackingReady) {
+        if (!transfer.sourceTrackingRequested) {
+            transfer.sourceTrackingRequested = true;
+            callDBus(SERVICE, OBJECT, TRACKING_INTERFACE,
+                "setWindowFloatingForScreen", windowId,
+                transfer.sourceScreenId, true, function () {
+                    const current = pendingScreenTransfers.get(window);
+                    if (!current || window.deleted) {
+                        return;
+                    }
+                    current.sourceTrackingReady = true;
+                    armPendingScreenTransfer(window);
+                });
+        }
+        return;
+    }
+
     // PlasmaZones' expected-output marker is intentionally emitted only by
     // its own navigation transaction.  A raw workspace.sendClientToScreen()
     // makes the effect synthesize windowClosed/windowOpened; with several
@@ -1274,6 +1388,7 @@ function armPendingScreenTransfer(window) {
                 controllerManaged.delete(window);
                 applyControllerTree(current.oldKey, current.sourceOutput);
             }
+            workspace.activeWindow = window;
             current.moveRequested = true;
             callDBus(GLOBAL_ACCEL_SERVICE, GLOBAL_ACCEL_OBJECT,
                 GLOBAL_ACCEL_INTERFACE, "invokeShortcut", action,
@@ -1360,10 +1475,19 @@ function finalizePendingScreenTransfer(window) {
             !isRuleFloated(window)) {
         if (!treeContainsWindow(treesByContext.get(transfer.targetKey),
                 window)) {
-            treesByContext.set(transfer.targetKey,
-                insertWindowAtArrivalBoundary(
-                    treesByContext.get(transfer.targetKey), window,
-                    transfer.direction, transfer.targetOutput));
+            if (transfer.adoptionTarget &&
+                    treeContainsWindow(treesByContext.get(transfer.targetKey),
+                        transfer.adoptionTarget)) {
+                treesByContext.set(transfer.targetKey,
+                    insertWindowAtFocusedLeaf(
+                        treesByContext.get(transfer.targetKey), window,
+                        transfer.adoptionTarget));
+            } else {
+                treesByContext.set(transfer.targetKey,
+                    insertWindowAtArrivalBoundary(
+                        treesByContext.get(transfer.targetKey), window,
+                        transfer.direction, transfer.targetOutput));
+            }
         }
         controllerManaged.set(window, transfer.targetKey);
         window.keepAbove = false;
@@ -1372,7 +1496,8 @@ function finalizePendingScreenTransfer(window) {
         requestFancyAdaptiveReflow();
     }
     workspace.activeWindow = window;
-    log("completed transfer of " + plasmaZonesWindowId(window) + " from " +
+    log("completed " + (transfer.adoptionTarget ? "adoption" : "transfer") +
+        " of " + plasmaZonesWindowId(window) + " from " +
         String(transfer.sourceOutput.name) + " to " +
         String(transfer.targetOutput.name));
     return true;
@@ -1877,6 +2002,7 @@ function attach(window) {
         horizontallyMaximized.delete(window);
         pendingTreeRestore.delete(window);
         pendingScreenTransfers.delete(window);
+        pendingWindowAdoptions.delete(window);
         closingWindows.delete(window);
         openedOrder.delete(window);
         attachedWindows.delete(window);

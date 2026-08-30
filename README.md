@@ -73,6 +73,7 @@ The uninstaller restores the captured PlasmaZones settings, rules, assignments, 
 ./tests/live-stable-removal.sh  # isolated close/minimize promotion test
 ./tests/live-screen-transfer.sh  # two horizontally arranged outputs
 ./tests/live-unified-movement.sh  # local pane swap, then edge crossing
+./tests/live-new-window-adoption.sh  # new windows follow the focused output
 ./tests/live-cross-screen-focus.sh  # focus-only navigation across outputs
 ./tests/live-pane-swap.sh  # structure-preserving X/Y pane swaps
 ./tests/live-workspace-transfer.sh  # sends a window away and back
