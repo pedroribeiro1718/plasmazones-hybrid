@@ -64,6 +64,50 @@ function copyGeometry(rect) {
     };
 }
 
+function omarchyUsableRect(output) {
+    const screen = output.geometry;
+    let left = screen.x;
+    let top = screen.y;
+    let right = screen.x + screen.width;
+    let bottom = screen.y + screen.height;
+    const edgeTolerance = 2;
+
+    // Auto-hide Plasma panels deliberately publish no work-area strut, but
+    // KWin keeps their dock windows and edge geometry available while hidden.
+    // Reserve every edge-touching dock so a revealed panel never sits behind
+    // an Omarchy tile. FancyZones intentionally bypasses this function.
+    workspace.windowList().forEach(function (window) {
+        if (!window.dock || window.output !== output || window.deleted) {
+            return;
+        }
+        const rect = window.frameGeometry;
+        const rectRight = rect.x + rect.width;
+        const rectBottom = rect.y + rect.height;
+        if (rect.y <= screen.y + edgeTolerance) {
+            top = Math.max(top, rectBottom);
+        }
+        if (rectBottom >= screen.y + screen.height - edgeTolerance) {
+            bottom = Math.min(bottom, rect.y);
+        }
+        if (rect.x <= screen.x + edgeTolerance) {
+            left = Math.max(left, rectRight);
+        }
+        if (rectRight >= screen.x + screen.width - edgeTolerance) {
+            right = Math.min(right, rect.x);
+        }
+    });
+
+    // Fall back defensively if a malformed panel claims opposing edges.
+    if (right - left < 160 || bottom - top < 160) {
+        left = screen.x;
+        top = screen.y;
+        right = screen.x + screen.width;
+        bottom = screen.y + screen.height;
+    }
+    return {x: left + 12, y: top + 12,
+        width: right - left - 24, height: bottom - top - 24};
+}
+
 function appIdForWindow(window) {
     return String(window.desktopFileName || window.resourceClass ||
         window.resourceName || "").toLowerCase();
@@ -398,10 +442,9 @@ function applyControllerTree(key, output) {
     if (!tree || !output) {
         return;
     }
-    const rect = output.geometry;
+    const rect = omarchyUsableRect(output);
     const targets = [];
-    collectTreeGeometries(tree, {x: rect.x + 12, y: rect.y + 12,
-        width: rect.width - 24, height: rect.height - 24}, targets);
+    collectTreeGeometries(tree, rect, targets);
     // Grow coverage first, then shrink or move the displaced leaves. This
     // permits brief overlap during a structural edit but never exposes the
     // wallpaper as an intermediate hole while KWin processes each geometry.
@@ -463,6 +506,21 @@ function collectLeaves(node, leaves) {
     }
     collectLeaves(node.first, leaves);
     collectLeaves(node.second, leaves);
+}
+
+function reapplyOmarchyTreesForOutput(output) {
+    if (!output) {
+        return;
+    }
+    treesByContext.forEach(function (tree, key) {
+        const leaves = [];
+        collectLeaves(tree, leaves);
+        if (leaves.some(function (entry) {
+            return entry.window && entry.window.output === output;
+        })) {
+            applyControllerTree(key, output);
+        }
+    });
 }
 
 function splitLeaf(node, target, window) {
@@ -1254,6 +1312,18 @@ function attach(window) {
         return;
     }
     attachedWindows.set(window, true);
+    if (window.dock) {
+        const output = window.output;
+        window.frameGeometryChanged.connect(function () {
+            reapplyOmarchyTreesForOutput(window.output || output);
+        });
+        window.closed.connect(function () {
+            attachedWindows.delete(window);
+            reapplyOmarchyTreesForOutput(output);
+        });
+        reapplyOmarchyTreesForOutput(output);
+        return;
+    }
     if (windowIsInOmarchy(window)) {
         adoptOmarchyWindows();
     }

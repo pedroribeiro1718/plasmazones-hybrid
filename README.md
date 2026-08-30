@@ -45,7 +45,7 @@ The installation is user-local and never uses `sudo`. It backs up affected files
 
 In FancyZones, `Alt`-drag shows the overlay and `Ctrl+Alt`-drag spans adjacent zones. A mode switch uses the whole 3×2 grid: up to six windows partition all six cells; additional windows stack onto zones round-robin. A client whose minimum size exceeds one cell automatically spans adjacent cells. All geometry is calculated per output in logical coordinates, including mixed-DPI setups.
 
-In Omarchy, the KWin controller owns a balanced binary tree while PlasmaZones supplies mode/rule integration. New windows split the largest tile; removing or structurally moving one collapses its old branch immediately. Hidden, minimized, utility, popup, and dialog windows never reserve a tile.
+In Omarchy, the KWin controller owns a balanced binary tree while PlasmaZones supplies mode/rule integration. New windows split the largest tile; removing or structurally moving one collapses its old branch immediately. Hidden, minimized, utility, popup, and dialog windows never reserve a tile. Edge docks and panels remain unobstructed even when their auto-hide mode publishes no KDE work-area reservation.
 
 Steam is floated only in Omarchy mode. Games are unaffected.
 New normal windows follow KWin's active-output placement. Per-monitor
