@@ -29,7 +29,8 @@ The installation is user-local and never uses `sudo`. It backs up affected files
 | `plasmazones-mode-toggle reflow` | Rearrange without changing mode |
 | `plasmazones-mode-toggle status` | Show each monitor's active mode |
 | `Super+Arrow` | Focus a window |
-| `Super+Shift+Arrow` | Move/reparent a tile in that direction |
+| `Super+Shift+Arrow` | Swap with the neighboring pane in that direction |
+| `Super+Ctrl+Shift+Arrow` | Send the focused window to the physical screen in that direction |
 | `Super+T` | Toggle tiled/floating |
 | `Super+-` / `Super+=` | Shrink/grow the focused tile's width |
 | `Super+Shift+-` / `Super+Shift+=` | Shrink/grow its height |
@@ -45,7 +46,7 @@ The installation is user-local and never uses `sudo`. It backs up affected files
 
 In FancyZones, `Alt`-drag shows the overlay and `Ctrl+Alt`-drag spans adjacent zones. A mode switch uses the whole 3×2 grid: up to six windows partition all six cells; additional windows stack onto zones round-robin. A client whose minimum size exceeds one cell automatically spans adjacent cells. All geometry is calculated per output in logical coordinates, including mixed-DPI setups.
 
-In Omarchy, the KWin controller owns a dwindle tree while PlasmaZones supplies mode/rule integration. A new window follows and splits the focused tile, including its monitor (wide tiles split left/right; tall tiles split top/bottom), falling back to the largest tile only when no managed window is focused. When a window closes, minimizes, or hides, the oldest leaf in its sibling subtree takes over the vacated tile; explicit structural moves use ordinary BSP collapse. Utility, popup, and dialog windows never reserve a tile. Auto-hide docks overlay tiles without reducing usable desktop space.
+In Omarchy, the KWin controller owns a dwindle tree while PlasmaZones supplies mode/rule integration. A new window follows and splits the focused tile, including its monitor (wide tiles split left/right; tall tiles split top/bottom), falling back to the largest tile only when no managed window is focused. Directional movement swaps pane occupants without changing the tree. When a window closes, minimizes, hides, or leaves the output, the oldest leaf in its sibling subtree takes over the vacated tile. Utility, popup, and dialog windows never reserve a tile. Auto-hide docks overlay tiles without reducing usable desktop space.
 
 Steam is floated only in Omarchy mode. Games are unaffected.
 New normal windows follow KWin's active-output placement. Per-monitor
@@ -69,6 +70,9 @@ The uninstaller restores the captured PlasmaZones settings, rules, assignments, 
 ./tests/smoke.sh
 ./tests/live-coverage.sh 5   # run inside a live Omarchy session
 ./tests/live-stable-removal.sh  # isolated close/minimize promotion test
+./tests/live-screen-transfer.sh  # two horizontally arranged outputs
+./tests/live-pane-swap.sh  # structure-preserving X/Y pane swaps
+./tests/live-workspace-transfer.sh  # sends a window away and back
 ./tests/live-fancy-coverage.sh 5  # run inside a live FancyZones session
 ```
 

@@ -73,6 +73,51 @@ tree = removeWindowFromTree(tree, closed);
 assert(tree.orientation === "v" && tree.first.window === conventionalOld,
     "structural removal must retain conventional BSP collapse");
 
+const leftOutput = {name: "left", geometry: {
+    x: -1920, y: 200, width: 1920, height: 1080
+}};
+const centerOutput = {name: "center", geometry: {
+    x: 0, y: 0, width: 2560, height: 1440
+}};
+const rightOutput = {name: "right", geometry: {
+    x: 2560, y: 0, width: 1707, height: 960
+}};
+const upperOutput = {name: "upper", geometry: {
+    x: 0, y: -1080, width: 1920, height: 1080
+}};
+workspace.screenOrder = [rightOutput, upperOutput, leftOutput, centerOutput];
+assert(directionalOutput(centerOutput, "left") === leftOutput,
+    "left must use physical output geometry, not screen-list order");
+assert(directionalOutput(centerOutput, "right") === rightOutput,
+    "right must support mixed-size and mixed-DPI logical geometries");
+assert(directionalOutput(centerOutput, "up") === upperOutput,
+    "up must select the physically upper output");
+assert(directionalOutput(centerOutput, "down") === null,
+    "a missing directional output must be a no-op");
+
+const swapA = testWindow("swap-a", 7);
+const swapB = testWindow("swap-b", 8);
+const swapC = testWindow("swap-c", 9);
+tree = {window: null, orientation: "v", ratio: 0.6,
+    first: leaf(swapA),
+    second: {window: null, orientation: "h", ratio: 0.4,
+        first: leaf(swapB), second: leaf(swapC)}};
+const swapRoot = tree;
+const swapBranch = tree.second;
+const leaves = [];
+collectLeaves(tree, leaves);
+const leafA = leaves.find(candidate => candidate.window === swapA);
+const leafC = leaves.find(candidate => candidate.window === swapC);
+leafA.window = swapC;
+leafC.window = swapA;
+assert(tree === swapRoot && tree.second === swapBranch,
+    "pane swapping must retain every tree node");
+assert(tree.orientation === "v" && tree.ratio === 0.6 &&
+        tree.second.orientation === "h" && tree.second.ratio === 0.4,
+    "pane swapping must retain orientations and ratios");
+assert(tree.first.window === swapC && tree.second.second.window === swapA,
+    "pane swapping must exchange only leaf occupants");
+
 console.log("Stable removal tests passed.");
 `;
 

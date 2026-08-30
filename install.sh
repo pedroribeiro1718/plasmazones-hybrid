@@ -227,6 +227,20 @@ for workspace_number in 1 2 3 4; do
         "none,Meta+${workspace_number},Activate Task Manager Entry ${workspace_number}"
 done
 
+# Direct workspace numbers replace KWin's directional desktop moves. Release
+# their chords for physical-output transfer in the hybrid controller.
+for direction in Left Right Up Down; do
+    desktop_action="Window One Desktop ${direction}"
+    if [[ "$direction" == "Left" || "$direction" == "Right" ]]; then
+        desktop_action="Window One Desktop to the ${direction}"
+    fi
+    qdbus6 org.kde.kglobalaccel /kglobalaccel \
+        org.kde.KGlobalAccel.unregister kwin "$desktop_action" \
+        >/dev/null 2>&1 || true
+    kwriteconfig6 --file kglobalshortcutsrc --group kwin \
+        --key "$desktop_action" --delete
+done
+
 upsert_rule_json() {
     local rule_json="$1"
     local rule_id all_rules

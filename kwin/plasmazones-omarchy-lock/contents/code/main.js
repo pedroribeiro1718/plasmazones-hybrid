@@ -944,71 +944,140 @@ function directionalNeighbor(source, direction) {
 
 function moveFocused(direction) {
     const source = activeNormalWindow();
-    if (!source || source.fullScreen ||
-            (!controllerManaged.has(source) &&
-             floatingWindows.has(plasmaZonesWindowId(source)))) {
+    if (!source || source.fullScreen || !controllerManaged.has(source)) {
         return;
     }
     const target = directionalNeighbor(source, direction);
-    const screenId = screenIdForWindow(source);
-    if (!target || screenId === undefined) {
+    const key = controllerManaged.get(source);
+    if (!target || controllerManaged.get(target) !== key) {
         return;
     }
 
-    if (controllerManaged.has(source)) {
-        const key = controllerManaged.get(source);
-        let tree = removeWindowFromTree(treesByContext.get(key), source);
-        tree = insertWindowAtTarget(tree, target, source, direction);
-        treesByContext.set(key, tree);
-        applyControllerTree(key, source.output);
-        workspace.activeWindow = source;
+    const leaves = [];
+    collectLeaves(treesByContext.get(key), leaves);
+    const sourceLeaf = leaves.find(function (candidate) {
+        return candidate.window === source;
+    });
+    const targetLeaf = leaves.find(function (candidate) {
+        return candidate.window === target;
+    });
+    if (!sourceLeaf || !targetLeaf) {
         return;
     }
 
-    const sourceId = plasmaZonesWindowId(source);
-    const targetId = plasmaZonesWindowId(target);
-    const minSize = source.minSize || {width: 0, height: 0};
-
-    // Removal collapses the source's parent, so its sibling immediately fills
-    // the hole. Re-inserting after the directional target creates a new local
-    // branch there instead of merely exchanging two leaf contents.
-    callDBus(SERVICE, OBJECT, TILING_INTERFACE, "releaseWindowTracking",
-        sourceId, function () {
-            callDBus(SERVICE, OBJECT, TILING_INTERFACE,
-                "notifyWindowFocused", targetId, String(screenId),
-                function () {
-                    callDBus(SERVICE, OBJECT, TILING_INTERFACE,
-                        "windowOpened", sourceId, String(screenId),
-                        Math.max(0, Math.round(minSize.width || 0)),
-                        Math.max(0, Math.round(minSize.height || 0)),
-                        function () {
-                            workspace.activeWindow = source;
-                        });
-                });
-        });
+    // Directional movement is a pane swap, not a tree edit. Only the two leaf
+    // occupants change; split topology, orientation, ratios, and geometries
+    // remain byte-for-byte equivalent.
+    sourceLeaf.window = target;
+    targetLeaf.window = source;
+    applyControllerTree(key, source.output);
+    workspace.activeWindow = source;
 }
 
-function insertWindowAtTarget(node, target, source, direction) {
-    if (!node) {
-        return leaf(source);
+function directionalOutput(sourceOutput, direction) {
+    if (!sourceOutput || !sourceOutput.geometry) {
+        return null;
     }
-    if (isLeaf(node)) {
-        if (node.window !== target) {
-            return node;
+    const source = sourceOutput.geometry;
+    const sourceCenterX = source.x + source.width / 2;
+    const sourceCenterY = source.y + source.height / 2;
+    let best = null;
+    let bestScore = Number.MAX_VALUE;
+
+    workspace.screenOrder.forEach(function (candidate) {
+        if (candidate === sourceOutput || !candidate.geometry) {
+            return;
         }
+        const geometry = candidate.geometry;
+        const dx = geometry.x + geometry.width / 2 - sourceCenterX;
+        const dy = geometry.y + geometry.height / 2 - sourceCenterY;
+        let primary;
+        let secondary;
+        let overlaps;
+
+        if (direction === "left" && dx < 0) {
+            primary = -dx;
+            secondary = Math.abs(dy);
+            overlaps = rectanglesOverlapOnAxis(source, geometry, "y");
+        } else if (direction === "right" && dx > 0) {
+            primary = dx;
+            secondary = Math.abs(dy);
+            overlaps = rectanglesOverlapOnAxis(source, geometry, "y");
+        } else if (direction === "up" && dy < 0) {
+            primary = -dy;
+            secondary = Math.abs(dx);
+            overlaps = rectanglesOverlapOnAxis(source, geometry, "x");
+        } else if (direction === "down" && dy > 0) {
+            primary = dy;
+            secondary = Math.abs(dx);
+            overlaps = rectanglesOverlapOnAxis(source, geometry, "x");
+        } else {
+            return;
+        }
+
         const horizontal = direction === "left" || direction === "right";
-        const sourceFirst = direction === "left" || direction === "up";
-        return {window: null, orientation: horizontal ? "v" : "h",
-            ratio: 0.5,
-            first: sourceFirst ? leaf(source) : node,
-            second: sourceFirst ? node : leaf(source)};
+        const primarilyAligned = horizontal ?
+            Math.abs(dx) >= Math.abs(dy) : Math.abs(dy) >= Math.abs(dx);
+        if (!overlaps && !primarilyAligned) {
+            return;
+        }
+        const score = primary + secondary * 2 + (overlaps ? 0 : 100000);
+        if (score < bestScore) {
+            bestScore = score;
+            best = candidate;
+        }
+    });
+    return best;
+}
+
+function moveFocusedToScreen(direction) {
+    const window = workspace.activeWindow;
+    if (!isTilingCandidate(window) || window.fullScreen || !window.output) {
+        return;
     }
-    node.first = insertWindowAtTarget(node.first, target, source, direction);
-    if (!treeContainsWindow(node.first, source)) {
-        node.second = insertWindowAtTarget(node.second, target, source,
-            direction);
+    const sourceOutput = window.output;
+    const targetOutput = directionalOutput(sourceOutput, direction);
+    if (!targetOutput) {
+        return;
     }
-    return node;
+
+    const oldKey = controllerManaged.get(window);
+    if (oldKey) {
+        treesByContext.set(oldKey,
+            removeWindowPreservingShape(treesByContext.get(oldKey), window));
+        controllerManaged.delete(window);
+        applyControllerTree(oldKey, sourceOutput);
+    }
+
+    // KWin performs the physical output transfer. The hybrid controller then
+    // updates the destination placement model instead of leaving stale tree
+    // membership on the source output.
+    workspace.sendClientToScreen(window, targetOutput);
+    const targetScreenId = screenIdsByConnector.get(String(targetOutput.name));
+    const desktop = desktopNumber(window);
+    const targetKey = targetScreenId === undefined ? null :
+        contextKey(targetScreenId, desktop);
+    const targetMode = targetKey ? modesByContext.get(targetKey) : undefined;
+
+    if (targetMode === OMARCHY_MODE && window !== scratchpadWindow &&
+            !userFloated.has(window) && !isRuleFloated(window)) {
+        treesByContext.set(targetKey,
+            insertWindowBalanced(treesByContext.get(targetKey), window));
+        controllerManaged.set(window, targetKey);
+        window.keepAbove = false;
+        callDBus(SERVICE, OBJECT, TRACKING_INTERFACE,
+            "setWindowFloatingForScreen", plasmaZonesWindowId(window),
+            String(targetScreenId), true, function () {
+                applyControllerTree(targetKey, targetOutput);
+            });
+        applyControllerTree(targetKey, targetOutput);
+    } else if (targetMode === 0) {
+        requestFancyAdaptiveReflow();
+    }
+    workspace.activeWindow = window;
+    log("sent " + plasmaZonesWindowId(window) + " " + direction +
+        " from " + String(sourceOutput.name) + " to " +
+        String(targetOutput.name));
 }
 
 function desktopAt(number) {
@@ -1042,7 +1111,7 @@ function moveFocusedToDesktop(number) {
     const oldKey = controllerManaged.get(window);
     if (oldKey) {
         treesByContext.set(oldKey,
-            removeWindowFromTree(treesByContext.get(oldKey), window));
+            removeWindowPreservingShape(treesByContext.get(oldKey), window));
         controllerManaged.delete(window);
         applyControllerTree(oldKey, window.output);
     }
@@ -1152,9 +1221,14 @@ function registerOmarchyShortcuts() {
                 focusDirection(direction.toLowerCase());
             });
         registerShortcut("PZH Move " + direction,
-            "Move focused tile " + direction.toLowerCase(),
+            "Swap focused window with pane " + direction.toLowerCase(),
             "Meta+Shift+" + direction, function () {
                 moveFocused(direction.toLowerCase());
+            });
+        registerShortcut("PZH Send to Screen " + direction,
+            "Send focused window to the screen " + direction.toLowerCase(),
+            "Meta+Ctrl+Shift+" + direction, function () {
+                moveFocusedToScreen(direction.toLowerCase());
             });
     });
     for (let number = 1; number <= 4; number++) {

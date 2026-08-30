@@ -107,6 +107,18 @@ for workspace_number in 1 2 3 4; do
         "none,Meta+${workspace_number},Activate Task Manager Entry ${workspace_number}"
 done
 
+for direction in Left Right Up Down; do
+    desktop_action="Window One Desktop ${direction}"
+    if [[ "$direction" == "Left" || "$direction" == "Right" ]]; then
+        desktop_action="Window One Desktop to the ${direction}"
+    fi
+    qdbus6 org.kde.kglobalaccel /kglobalaccel \
+        org.kde.KGlobalAccel.unregister kwin "$desktop_action" \
+        >/dev/null 2>&1 || true
+    kwriteconfig6 --file kglobalshortcutsrc --group kwin \
+        --key "$desktop_action" --delete
+done
+
 kwriteconfig6 --file kwinrc --group Plugins --key "${GUARD_ID}Enabled" true
 qdbus6 org.kde.KWin /Scripting \
     org.kde.kwin.Scripting.unloadScript "$GUARD_ID" >/dev/null 2>&1 || true
