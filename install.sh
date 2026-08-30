@@ -259,35 +259,8 @@ upsert_rule() {
     upsert_rule_json "$rule_json"
 }
 
-active_output_rule_id() {
-    local digest
-    digest="$(printf 'plasmazones-hybrid:%s' "$1" | sha256sum)"
-    digest="${digest%% *}"
-    printf '{%s-%s-%s-%s-%s}' \
-        "${digest:0:8}" "${digest:8:4}" "${digest:12:4}" \
-        "${digest:16:4}" "${digest:20:12}"
-}
-
-upsert_active_output_rule() {
-    local screen_id="$1"
-    local rule_id rule_json
-    rule_id="$(active_output_rule_id "$screen_id")"
-    rule_json="$(jq -cn --arg id "$rule_id" --arg screen "$screen_id" '{
-        id: $id,
-        name: ("Keep new windows on " + $screen),
-        enabled: true,
-        priority: 50,
-        match: {field: "screenId", op: "equals", value: $screen},
-        actions: [{type: "routeToScreen", targetScreenId: $screen}]
-    }')"
-    upsert_rule_json "$rule_json"
-}
-
 upsert_rule "$ROOT/rules/stable-geometry.json"
 upsert_rule "$ROOT/rules/float-steam.json"
-while IFS= read -r screen_id; do
-    upsert_active_output_rule "$screen_id"
-done < <(jq -r 'map(.screenId) | unique[]' <<<"$states_before")
 
 qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" "$LAYOUT_IFACE.setSaveBatchMode" true >/dev/null
 while IFS= read -r state; do

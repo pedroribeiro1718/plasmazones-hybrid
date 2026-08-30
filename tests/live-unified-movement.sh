@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT
 readonly TEST_DESKTOP="${PZH_TEST_DESKTOP:-4}"
+readonly RUN_ID="$$-$(date +%s%N)"
 ORIGINAL_DESKTOP="$(kdotool get_desktop)"
 readonly ORIGINAL_DESKTOP
 declare -a IDS=()
@@ -29,14 +30,58 @@ invoke() {
 }
 
 geometry() {
-    kdotool getwindowgeometry "$1" | awk '
-        /Position:/ {gsub(/,/, " ", $2); x=$2; y=$3}
-        /Geometry:/ {print x, y, $2}'
+    local value=""
+    for _ in {1..5}; do
+        if value="$(kdotool getwindowgeometry "$1" 2>/dev/null | awk '
+            /Position:/ {gsub(/,/, " ", $2); x=$2; y=$3}
+            /Geometry:/ {
+                split($2, size, "x")
+                printf "%.0f %.0f %.0fx%.0f\n", x, y, size[1], size[2]
+            }')" && [[ -n "$value" ]]; then
+            printf '%s\n' "$value"
+            return 0
+        fi
+        sleep 0.05
+    done
+    return 1
+}
+
+wait_for_geometry() {
+    local id="$1" expected="$2"
+    for _ in {1..30}; do
+        [[ "$(geometry "$id")" == "$expected" ]] && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+wait_for_x_at_least() {
+    local id="$1" threshold="$2" current=""
+    for _ in {1..30}; do
+        current="$(geometry "$id")"
+        if [[ -n "$current" ]] && (( ${current%% *} >= threshold )); then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
+wait_for_x_below() {
+    local id="$1" threshold="$2" current=""
+    for _ in {1..30}; do
+        current="$(geometry "$id")"
+        if [[ -n "$current" ]] && (( ${current%% *} < threshold )); then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
 }
 
 launch() {
     local label="$1" title id=""
-    title="PZH-UNIFIED-MOVE-${label}"
+    title="PZH-UNIFIED-MOVE-${RUN_ID}-${label}"
     konsole --separate -p "LocalTabTitleFormat=${title}" \
         -p "tabtitle=${title}" --hold -e /usr/bin/sleep 120 &
     PIDS+=("$!")
@@ -80,18 +125,34 @@ local_right_geometry="$(geometry "$local_right_id")"
 other_screen_geometry="$(geometry "$other_screen_id")"
 local_right_x="${local_right_geometry%% *}"
 other_screen_x="${other_screen_geometry%% *}"
-(( other_screen_x > local_right_x ))
+(( other_screen_x > local_right_x )) || {
+    echo "Initial output normalization failed: local '$local_right_geometry', other '$other_screen_geometry'." >&2
+    exit 1
+}
 
 # One chord swaps with the immediate pane; it must not jump screens.
 kdotool windowactivate "$bottom_left_id" >/dev/null
 sleep 0.35
 invoke "PZH Move Right"
-[[ "$(geometry "$bottom_left_id")" == "$local_right_geometry" ]]
-[[ "$(geometry "$local_right_id")" == "$bottom_left_geometry" ]]
-[[ "$(geometry "$other_screen_id")" == "$other_screen_geometry" ]]
+wait_for_geometry "$bottom_left_id" "$local_right_geometry" || {
+    echo "Same-screen source swap did not converge." >&2
+    exit 1
+}
+wait_for_geometry "$local_right_id" "$bottom_left_geometry" || {
+    echo "Same-screen partner swap did not converge." >&2
+    exit 1
+}
+[[ "$(geometry "$other_screen_id")" == "$other_screen_geometry" ]] || {
+    echo "Same-screen swap changed the other output." >&2
+    exit 1
+}
 
 # Repeating the same chord from the new edge pane continues to monitor two.
 invoke "PZH Move Right"
+wait_for_x_at_least "$bottom_left_id" "$other_screen_x" || {
+    echo "Edge-pane movement did not converge on the next output." >&2
+    exit 1
+}
 moved_geometry="$(geometry "$bottom_left_id")"
 moved_x="${moved_geometry%% *}"
 destination_neighbor_geometry="$(geometry "$other_screen_id")"
@@ -108,6 +169,10 @@ destination_neighbor_x="${destination_neighbor_geometry%% *}"
 # From that left edge, the reverse move must enter monitor one at its right
 # boundary rather than appearing to the left of the resident aligned pane.
 invoke "PZH Move Left"
+wait_for_x_below "$bottom_left_id" "$other_screen_x" || {
+    echo "Reverse movement did not converge on the source output." >&2
+    exit 1
+}
 returned_geometry="$(geometry "$bottom_left_id")"
 returned_x="${returned_geometry%% *}"
 resident_left_geometry="$(geometry "$top_left_id")"
@@ -125,5 +190,26 @@ resident_left_height="${resident_left_size#*x}"
     exit 1
 }
 
+# A completed transaction must remain quiescent. The historical routing race
+# looked correct for a moment, then repeatedly reopened/re-tiled the same
+# client for several seconds. Sample every managed test window long enough to
+# catch that delayed feedback loop.
+stable_ids=("$top_left_id" "$local_right_id" "$bottom_left_id" \
+    "$other_screen_id")
+stable_geometries=()
+for id in "${stable_ids[@]}"; do
+    stable_geometries+=("$(geometry "$id")")
+done
+for _ in {1..15}; do
+    sleep 0.2
+    for index in "${!stable_ids[@]}"; do
+        current_geometry="$(geometry "${stable_ids[$index]}")"
+        [[ "$current_geometry" == "${stable_geometries[$index]}" ]] || {
+            echo "A completed screen transfer entered a delayed geometry loop: window ${stable_ids[$index]} changed from '${stable_geometries[$index]}' to '${current_geometry}'." >&2
+            exit 1
+        }
+    done
+done
+
 "$ROOT/tests/live-coverage.sh" 3
-printf 'Unified movement entered both outputs at the boundary crossed.\n'
+printf 'Unified movement crossed both boundaries and remained stable.\n'

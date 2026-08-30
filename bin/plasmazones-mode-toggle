@@ -128,37 +128,20 @@ legacy_bsp_ratio_rule_id() {
         "${digest:16:4}" "${digest:20:12}"
 }
 
-ensure_active_output_rules() {
+remove_active_output_rules() {
     local current_states="$1"
-    local all_rules screen_id rule_id rule_json
+    local all_rules screen_id rule_id
     all_rules="$(qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
         "$PZ_RULES_IFACE.getAllRules")" \
         || fail "Could not read PlasmaZones rules."
 
     while IFS= read -r screen_id; do
         rule_id="$(active_output_rule_id "$screen_id")"
-        rule_json="$(jq -cn --arg id "$rule_id" --arg screen "$screen_id" '{
-            id: $id,
-            name: ("Keep new windows on " + $screen),
-            enabled: true,
-            priority: 50,
-            match: {field: "screenId", op: "equals", value: $screen},
-            actions: [{type: "routeToScreen", targetScreenId: $screen}]
-        }')"
-
-        if jq -e --argjson wanted "$rule_json" \
-            'any(.rules[]; . == $wanted)' >/dev/null <<<"$all_rules"; then
-            continue
-        fi
         if jq -e --arg id "$rule_id" \
             'any(.rules[]; .id == $id)' >/dev/null <<<"$all_rules"; then
             qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
-                "$PZ_RULES_IFACE.updateRule" "$rule_json" >/dev/null \
-                || fail "Could not update active-output routing for $screen_id."
-        else
-            qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
-                "$PZ_RULES_IFACE.addRule" "$rule_json" >/dev/null \
-                || fail "Could not add active-output routing for $screen_id."
+                "$PZ_RULES_IFACE.removeRule" "$rule_id" >/dev/null \
+                || fail "Could not remove obsolete active-output routing for $screen_id."
         fi
     done < <(jq -r 'map(.screenId) | unique[]' <<<"$current_states")
 }
@@ -264,11 +247,12 @@ if [[ "$target_mode" -eq -1 ]]; then
     exit 0
 fi
 
-# A same-screen RouteToScreen directive tells PlasmaZones that KWin's initial
-# placement is intentional. This suppresses historical cross-monitor session
-# reclaim while still allowing higher-priority app routing. Do not pair this
-# rule with Mode: PlasmaZones' cached open-routing query does not stamp it.
-ensure_active_output_rules "$states"
+# Older releases installed same-screen RouteToScreen rules. PlasmaZones also
+# evaluates them for existing windows during an output hop, where stale screen
+# identity can route the client backwards and create a geometry feedback loop.
+# The KWin controller already inserts genuinely new windows at the focused
+# leaf/output, so this redundant routing layer must stay removed.
+remove_active_output_rules "$states"
 
 # Omarchy applies every geometry in a retile together. FancyZones restores
 # the cascade used by the drag/snap UI. The 10 ms value is PlasmaZones' lower

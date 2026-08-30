@@ -84,6 +84,24 @@ done < <(jq -r '.rules[] |
            .name == "Omarchy Master + Stack on AORUS") | .id' \
     <<<"$all_rules")
 
+# Same-screen RouteToScreen rules from earlier builds are unsafe for existing
+# windows: PlasmaZones may resolve a transfer against stale source identity and
+# route it backwards, repeatedly removing/reopening and retiling the client.
+while IFS= read -r obsolete_rule_id; do
+    [[ -n "$obsolete_rule_id" ]] || continue
+    qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" \
+        "$RULES_IFACE.removeRule" "$obsolete_rule_id" >/dev/null \
+        || fail "Could not remove obsolete active-output routing rule."
+done < <(jq -r '.rules[] |
+    select(.priority == 50 and
+           (.name | startswith("Keep new windows on ")) and
+           .match.field == "screenId" and
+           .match.op == "equals" and
+           (.actions | length) == 1 and
+           .actions[0].type == "routeToScreen" and
+           .actions[0].targetScreenId == .match.value) | .id' \
+    <<<"$all_rules")
+
 while IFS= read -r stale_action; do
     [[ -n "$stale_action" ]] || continue
     qdbus6 org.kde.kglobalaccel /kglobalaccel \

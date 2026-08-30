@@ -18,6 +18,9 @@ const DRAG_INTERFACE = "org.plasmazones.WindowDrag";
 const SNAP_INTERFACE = "org.plasmazones.Snap";
 const TILING_INTERFACE = "org.plasmazones.Tiling";
 const OMARCHY_MODE = 1;
+const GLOBAL_ACCEL_SERVICE = "org.kde.kglobalaccel";
+const GLOBAL_ACCEL_OBJECT = "/component/plasmazonesd";
+const GLOBAL_ACCEL_INTERFACE = "org.kde.kglobalaccel.Component";
 
 // The bundled FancyZones layout is a fixed 3x2 grid. These UUIDs are stable
 // because install/upgrade imports the repository layout verbatim.
@@ -75,6 +78,14 @@ function isUsableGeometry(rect) {
         Number.isFinite(Number(rect.width)) &&
         Number.isFinite(Number(rect.height)) &&
         Number(rect.width) > 0 && Number(rect.height) > 0);
+}
+
+function geometriesMatch(first, second) {
+    return isUsableGeometry(first) && isUsableGeometry(second) &&
+        Math.abs(Number(first.x) - Number(second.x)) <= 1 &&
+        Math.abs(Number(first.y) - Number(second.y)) <= 1 &&
+        Math.abs(Number(first.width) - Number(second.width)) <= 1 &&
+        Math.abs(Number(first.height) - Number(second.height)) <= 1;
 }
 
 function appIdForWindow(window) {
@@ -476,7 +487,10 @@ function applyControllerTree(key, output) {
                 return;
             }
             target.window.keepAbove = false;
-            target.window.frameGeometry = target.geometry;
+            if (!geometriesMatch(target.window.frameGeometry,
+                    target.geometry)) {
+                target.window.frameGeometry = target.geometry;
+            }
         });
     } finally {
         applyingControllerGeometry = false;
@@ -1183,43 +1197,123 @@ function moveFocusedToScreen(direction) {
     const desktop = desktopNumber(window);
     const targetKey = contextKey(targetScreenId, desktop);
     const targetMode = modesByContext.get(targetKey);
+    const sourceScreenId = screenIdsByConnector.get(String(sourceOutput.name));
     const needsManagedDestination = targetMode === OMARCHY_MODE &&
         window !== scratchpadWindow && !userFloated.has(window) &&
         !isRuleFloated(window);
 
-    const oldKey = controllerManaged.get(window);
-    if (oldKey) {
-        treesByContext.set(oldKey,
-            removeWindowPreservingShape(treesByContext.get(oldKey), window));
-        controllerManaged.delete(window);
-        applyControllerTree(oldKey, sourceOutput);
-    }
-
-    // KWin's output change is asynchronous. Keep destination membership out
-    // of the tree until both output and frameGeometry have converged; some
-    // clients briefly expose an undefined frame while crossing outputs.
+    // Keep destination membership pending until PlasmaZones' native
+    // cross-output transaction and our post-arrival float confirmation have
+    // both completed.  This prevents a transient daemon geometry from
+    // entering the controller tree.
     pendingScreenTransfers.set(window, {
         sourceOutput: sourceOutput,
         targetOutput: targetOutput,
+        sourceScreenId: sourceScreenId === undefined ? "" :
+            String(sourceScreenId),
         targetScreenId: String(targetScreenId),
         targetKey: targetKey,
         targetMode: targetMode,
         direction: direction,
+        oldKey: controllerManaged.get(window),
         needsManagedDestination: needsManagedDestination,
+        moveRequested: false,
         trackingRequested: false,
         trackingReady: !needsManagedDestination
     });
+    log("prepared transfer of " + plasmaZonesWindowId(window) + " " +
+        direction + " from " + String(sourceOutput.name) + " [" +
+        String(sourceScreenId) + "] to " + String(targetOutput.name) +
+        " [" + String(targetScreenId) + "]");
 
-    // Let KWin's outputChanged reach PlasmaZones first. Its native handler
-    // releases the source engine and re-adds the live window at the target;
-    // declaring the target floating before this point is racy because that
-    // source cleanup clears the declaration again.
-    workspace.sendClientToScreen(window, targetOutput);
+    if (needsManagedDestination) {
+        armPendingScreenTransfer(window);
+    } else {
+        beginPendingScreenTransfer(window);
+    }
+}
+
+function armPendingScreenTransfer(window) {
+    const transfer = pendingScreenTransfers.get(window);
+    if (!transfer || transfer.moveRequested || window.deleted) {
+        return;
+    }
+    const windowId = plasmaZonesWindowId(window);
+    const actionByDirection = {
+        left: "move_window_left",
+        right: "move_window_right",
+        up: "move_window_up",
+        down: "move_window_down"
+    };
+    const action = actionByDirection[transfer.direction];
+    if (!transfer.sourceScreenId || !action) {
+        pendingScreenTransfers.delete(window);
+        return;
+    }
+
+    // PlasmaZones' expected-output marker is intentionally emitted only by
+    // its own navigation transaction.  A raw workspace.sendClientToScreen()
+    // makes the effect synthesize windowClosed/windowOpened; with several
+    // instances of one app, the reopen can consume a sibling's persisted
+    // TILED slot and start a cross-output reclaim loop.  Temporarily hand this
+    // one leaf back to PlasmaZones as the source screen's only tiled member,
+    // then invoke its native directional move.  The daemon migrates state,
+    // reflows both outputs, and arms the compositor before applying geometry.
+    callDBus(SERVICE, OBJECT, TRACKING_INTERFACE,
+        "setWindowFloatingForScreen", windowId, transfer.sourceScreenId,
+        false, function () {
+            const current = pendingScreenTransfers.get(window);
+            if (!current || current.moveRequested || window.deleted) {
+                return;
+            }
+            if (current.oldKey && controllerManaged.get(window) ===
+                    current.oldKey) {
+                treesByContext.set(current.oldKey,
+                    removeWindowPreservingShape(
+                        treesByContext.get(current.oldKey), window));
+                controllerManaged.delete(window);
+                applyControllerTree(current.oldKey, current.sourceOutput);
+            }
+            current.moveRequested = true;
+            callDBus(GLOBAL_ACCEL_SERVICE, GLOBAL_ACCEL_OBJECT,
+                GLOBAL_ACCEL_INTERFACE, "invokeShortcut", action,
+                function () {
+                    // KWin's scripting bridge invokes this callback when the
+                    // D-Bus call completes but does not expose
+                    // Component.invokeShortcut's boolean return value.  The
+                    // output/frame signals are the authoritative completion
+                    // acknowledgement; treating an absent callback argument
+                    // as false races a successful native move with a source
+                    // rollback.
+                    finalizePendingScreenTransfer(window);
+                });
+        });
+}
+
+function beginPendingScreenTransfer(window) {
+    const transfer = pendingScreenTransfers.get(window);
+    if (!transfer || transfer.moveRequested || window.deleted) {
+        return;
+    }
+    transfer.moveRequested = true;
+
+    if (transfer.oldKey && controllerManaged.get(window) === transfer.oldKey) {
+        treesByContext.set(transfer.oldKey,
+            removeWindowPreservingShape(treesByContext.get(transfer.oldKey),
+                window));
+        controllerManaged.delete(window);
+        applyControllerTree(transfer.oldKey, transfer.sourceOutput);
+    }
+
+    // Destination membership remains out of our tree until both KWin's
+    // output and PlasmaZones' post-output floating confirmation converge.
+    workspace.sendClientToScreen(window, transfer.targetOutput);
     finalizePendingScreenTransfer(window);
     workspace.activeWindow = window;
-    log("requested " + plasmaZonesWindowId(window) + " " + direction +
-        " from " + String(sourceOutput.name) + " to " +
-        String(targetOutput.name));
+    log("requested " + plasmaZonesWindowId(window) + " " +
+        transfer.direction + " from " +
+        String(transfer.sourceOutput.name) + " to " +
+        String(transfer.targetOutput.name));
 }
 
 function finalizePendingScreenTransfer(window) {
@@ -1231,6 +1325,9 @@ function finalizePendingScreenTransfer(window) {
         pendingScreenTransfers.delete(window);
         return true;
     }
+    if (!transfer.moveRequested) {
+        return false;
+    }
     if (window.output !== transfer.targetOutput ||
             !isUsableGeometry(window.frameGeometry)) {
         return false;
@@ -1239,6 +1336,10 @@ function finalizePendingScreenTransfer(window) {
     if (transfer.needsManagedDestination && !transfer.trackingReady) {
         if (!transfer.trackingRequested) {
             transfer.trackingRequested = true;
+            log("confirming destination float for " +
+                plasmaZonesWindowId(window) + " on " +
+                transfer.targetScreenId + " (output " +
+                String(window.output ? window.output.name : "none") + ")");
             callDBus(SERVICE, OBJECT, TRACKING_INTERFACE,
                 "setWindowFloatingForScreen", plasmaZonesWindowId(window),
                 transfer.targetScreenId, true, function () {
@@ -1247,13 +1348,6 @@ function finalizePendingScreenTransfer(window) {
                         return;
                     }
                     current.trackingReady = true;
-                    // A delayed source reflow can race the D-Bus reply. Now
-                    // that the destination owns the floating state, repeat the
-                    // physical hop if necessary and finish on its next signal.
-                    if (window.output !== current.targetOutput) {
-                        workspace.sendClientToScreen(window,
-                            current.targetOutput);
-                    }
                     finalizePendingScreenTransfer(window);
                 });
         }
