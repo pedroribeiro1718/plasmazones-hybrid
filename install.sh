@@ -305,6 +305,14 @@ qdbus6 "$PZ_SERVICE" "$PZ_OBJECT" "$LAYOUT_IFACE.applyAssignmentChanges" >/dev/n
 
 kwriteconfig6 --file kwinrc --group Plugins --key "${GUARD_ID}Enabled" true
 qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "$GUARD_ID" >/dev/null 2>&1 || true
+for direction in Left Right Up Down; do
+    legacy_action="PZH Send to Screen ${direction}"
+    qdbus6 org.kde.kglobalaccel /kglobalaccel \
+        org.kde.KGlobalAccel.unregister kwin "$legacy_action" \
+        >/dev/null 2>&1 || true
+    kwriteconfig6 --file kglobalshortcutsrc --group kwin \
+        --key "$legacy_action" --delete
+done
 qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript \
     "$KWIN_SCRIPT_DIR/contents/code/main.js" "$GUARD_ID" >/dev/null
 qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.start >/dev/null

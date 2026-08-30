@@ -25,11 +25,7 @@ trap cleanup EXIT
 invoke() {
     qdbus6 org.kde.kglobalaccel /component/kwin \
         org.kde.kglobalaccel.Component.invokeShortcut "$1" >/dev/null
-    sleep 0.45
-}
-
-active_window() {
-    kdotool getactivewindow getwindowid %1
+    sleep 0.55
 }
 
 geometry() {
@@ -39,8 +35,8 @@ geometry() {
 }
 
 launch() {
-    local side="$1" title id=""
-    title="PZH-CROSS-FOCUS-${side}"
+    local label="$1" title id=""
+    title="PZH-UNIFIED-MOVE-${label}"
     konsole --separate -p "LocalTabTitleFormat=${title}" \
         -p "tabtitle=${title}" --hold -e /usr/bin/sleep 120 &
     PIDS+=("$!")
@@ -57,7 +53,7 @@ launch() {
 }
 
 grep -q 'Omarchy' < <("$ROOT/bin/plasmazones-mode-toggle" status) || {
-    echo "Live cross-screen focus testing requires Omarchy mode." >&2
+    echo "Live unified-movement testing requires Omarchy mode." >&2
     exit 2
 }
 
@@ -67,59 +63,41 @@ sleep 0.35
 launch TOP_LEFT
 invoke "PZH Direct Screen Left"
 top_left_id="${IDS[0]}"
-
 launch LOCAL_RIGHT
 invoke "PZH Direct Screen Left"
 local_right_id="${IDS[1]}"
-
 kdotool windowactivate "$top_left_id" >/dev/null
 sleep 0.35
 launch BOTTOM_LEFT
 invoke "PZH Direct Screen Left"
 bottom_left_id="${IDS[2]}"
-
 launch OTHER_SCREEN
 invoke "PZH Direct Screen Right"
 other_screen_id="${IDS[3]}"
 
-top_left_geometry="$(geometry "$top_left_id")"
-local_right_geometry="$(geometry "$local_right_id")"
 bottom_left_geometry="$(geometry "$bottom_left_id")"
+local_right_geometry="$(geometry "$local_right_id")"
 other_screen_geometry="$(geometry "$other_screen_id")"
-bottom_left_x="${bottom_left_geometry%% *}"
 local_right_x="${local_right_geometry%% *}"
 other_screen_x="${other_screen_geometry%% *}"
-(( local_right_x > bottom_left_x && other_screen_x > local_right_x )) || {
-    echo "Could not construct the interior-pane cross-screen fixture." >&2
-    exit 1
-}
+(( other_screen_x > local_right_x ))
 
-# Regression from the user screencast: bottom-left must first select the
-# full-height right pane on the SAME output, never the next monitor.
+# One chord swaps with the immediate pane; it must not jump screens.
 kdotool windowactivate "$bottom_left_id" >/dev/null
 sleep 0.35
-invoke "PZH Focus Right"
-[[ "$(active_window)" == "$local_right_id" ]] || {
-    echo "Bottom-left focus skipped the same-output right pane." >&2
-    exit 1
-}
-
-# Only the edge pane may cross the output boundary.
-invoke "PZH Focus Right"
-[[ "$(active_window)" == "$other_screen_id" ]] || {
-    echo "Focus did not cross from the rightmost pane to the next output." >&2
-    exit 1
-}
-invoke "PZH Focus Left"
-[[ "$(active_window)" == "$local_right_id" ]] || {
-    echo "Focus did not cross from the right output to the left." >&2
-    exit 1
-}
-
-[[ "$(geometry "$top_left_id")" == "$top_left_geometry" ]]
-[[ "$(geometry "$local_right_id")" == "$local_right_geometry" ]]
-[[ "$(geometry "$bottom_left_id")" == "$bottom_left_geometry" ]]
+invoke "PZH Move Right"
+[[ "$(geometry "$bottom_left_id")" == "$local_right_geometry" ]]
+[[ "$(geometry "$local_right_id")" == "$bottom_left_geometry" ]]
 [[ "$(geometry "$other_screen_id")" == "$other_screen_geometry" ]]
-"$ROOT/tests/live-coverage.sh" 3
 
-printf 'Live focus preferred the local pane, then crossed at the edge, without moving windows.\n'
+# Repeating the same chord from the new edge pane continues to monitor two.
+invoke "PZH Move Right"
+moved_geometry="$(geometry "$bottom_left_id")"
+moved_x="${moved_geometry%% *}"
+(( moved_x >= other_screen_x )) || {
+    echo "Edge-pane movement did not continue onto the next output." >&2
+    exit 1
+}
+
+"$ROOT/tests/live-coverage.sh" 3
+printf 'Unified movement swapped locally, then continued onto the next output.\n'

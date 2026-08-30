@@ -54,10 +54,10 @@ kdotool windowactivate "$window_id" >/dev/null
 sleep 0.35
 
 # Normalize onto the leftmost output, transfer right, then return left.
-invoke "PZH Send to Screen Left"
+invoke "PZH Direct Screen Left"
 sleep 0.45
 left_x="$(window_x)"
-invoke "PZH Send to Screen Right"
+invoke "PZH Direct Screen Right"
 sleep 0.45
 right_x="$(window_x)"
 (( right_x > left_x )) || {
@@ -66,7 +66,7 @@ right_x="$(window_x)"
 }
 "$ROOT/tests/live-coverage.sh" 3
 
-invoke "PZH Send to Screen Left"
+invoke "PZH Direct Screen Left"
 sleep 0.45
 returned_x="$(window_x)"
 (( returned_x < right_x )) || {

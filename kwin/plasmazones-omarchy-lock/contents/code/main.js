@@ -999,12 +999,12 @@ function directionalNeighbor(source, direction, outputScope) {
 function moveFocused(direction) {
     const source = activeNormalWindow();
     if (!source || source.fullScreen || !controllerManaged.has(source)) {
-        return;
+        return false;
     }
     const target = directionalNeighbor(source, direction);
     const key = controllerManaged.get(source);
     if (!target || controllerManaged.get(target) !== key) {
-        return;
+        return false;
     }
 
     const leaves = [];
@@ -1016,7 +1016,7 @@ function moveFocused(direction) {
         return candidate.window === target;
     });
     if (!sourceLeaf || !targetLeaf) {
-        return;
+        return false;
     }
 
     // Directional movement is a pane swap, not a tree edit. Only the two leaf
@@ -1026,6 +1026,20 @@ function moveFocused(direction) {
     targetLeaf.window = source;
     applyControllerTree(key, source.output);
     workspace.activeWindow = source;
+    return true;
+}
+
+function moveFocusedAcrossLayout(direction) {
+    const source = activeNormalWindow();
+    if (!source || source.fullScreen) {
+        return;
+    }
+    if (moveFocused(direction)) {
+        return;
+    }
+    if (touchesOutputEdge(source, direction)) {
+        moveFocusedToScreen(direction);
+    }
 }
 
 function directionalOutput(sourceOutput, direction) {
@@ -1348,13 +1362,17 @@ function registerOmarchyShortcuts() {
                 focusDirection(direction.toLowerCase());
             });
         registerShortcut("PZH Move " + direction,
-            "Swap focused window with pane " + direction.toLowerCase(),
+            "Move focused window " + direction.toLowerCase() +
+                " through panes and screens",
             "Meta+Shift+" + direction, function () {
-                moveFocused(direction.toLowerCase());
+                moveFocusedAcrossLayout(direction.toLowerCase());
             });
-        registerShortcut("PZH Send to Screen " + direction,
-            "Send focused window to the screen " + direction.toLowerCase(),
-            "Meta+Ctrl+Shift+" + direction, function () {
+        // Unbound test hook: public movement uses the single Hyprland-style
+        // Meta+Shift+Arrow path above, while live tests can still exercise the
+        // raw asynchronous output-transfer transaction in isolation.
+        registerShortcut("PZH Direct Screen " + direction,
+            "Test-only direct screen transfer " + direction.toLowerCase(),
+            "", function () {
                 moveFocusedToScreen(direction.toLowerCase());
             });
     });

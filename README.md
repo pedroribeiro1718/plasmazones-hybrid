@@ -29,8 +29,7 @@ The installation is user-local and never uses `sudo`. It backs up affected files
 | `plasmazones-mode-toggle reflow` | Rearrange without changing mode |
 | `plasmazones-mode-toggle status` | Show each monitor's active mode |
 | `Super+Arrow` | Focus the adjacent pane; cross monitors only from an edge pane |
-| `Super+Shift+Arrow` | Swap with the neighboring pane in that direction |
-| `Super+Ctrl+Shift+Arrow` | Send the focused window to the physical screen in that direction |
+| `Super+Shift+Arrow` | Move through panes; continue onto the next monitor from an edge |
 | `Super+T` | Toggle tiled/floating |
 | `Super+-` / `Super+=` | Shrink/grow the focused tile's width |
 | `Super+Shift+-` / `Super+Shift+=` | Shrink/grow its height |
@@ -71,6 +70,7 @@ The uninstaller restores the captured PlasmaZones settings, rules, assignments, 
 ./tests/live-coverage.sh 5   # run inside a live Omarchy session
 ./tests/live-stable-removal.sh  # isolated close/minimize promotion test
 ./tests/live-screen-transfer.sh  # two horizontally arranged outputs
+./tests/live-unified-movement.sh  # local pane swap, then edge crossing
 ./tests/live-cross-screen-focus.sh  # focus-only navigation across outputs
 ./tests/live-pane-swap.sh  # structure-preserving X/Y pane swaps
 ./tests/live-workspace-transfer.sh  # sends a window away and back
