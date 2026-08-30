@@ -5,7 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT
 readonly TEST_DESKTOP="${PZH_TEST_DESKTOP:-4}"
-readonly RUN_ID="$$-$(date +%s%N)"
+RUN_ID="$$-$(date +%s%N)"
+readonly RUN_ID
 ORIGINAL_DESKTOP="$(kdotool get_desktop)"
 readonly ORIGINAL_DESKTOP
 declare -a IDS=()
