@@ -867,7 +867,11 @@ function focusDirection(direction) {
     if (!source) {
         return;
     }
-    const target = directionalNeighbor(source, direction);
+    // Keep intra-output navigation intuitive. Only cross an output boundary
+    // when there is no eligible pane farther in that direction on the active
+    // output, matching Hyprland's edge-navigation behavior.
+    const target = directionalNeighbor(source, direction, "same") ||
+        directionalNeighbor(source, direction, "other");
     if (target) {
         workspace.activeWindow = target;
     }
@@ -908,7 +912,8 @@ function rectanglesOverlapOnAxis(a, b, axis) {
         Math.min(a.y + a.height, b.y + b.height);
 }
 
-function directionalNeighbor(source, direction) {
+function directionalNeighbor(source, direction, outputScope) {
+    outputScope = outputScope || "same";
     const sourceGeometry = source.frameGeometry;
     const sourceCenterX = sourceGeometry.x + sourceGeometry.width / 2;
     const sourceCenterY = sourceGeometry.y + sourceGeometry.height / 2;
@@ -916,8 +921,10 @@ function directionalNeighbor(source, direction) {
     let bestScore = Number.MAX_VALUE;
 
     workspace.windowList().forEach(function (candidate) {
+        const sameOutput = candidate.output === source.output;
         if (candidate === source || !isTilingCandidate(candidate) ||
-                candidate.output !== source.output ||
+                (outputScope === "same" && !sameOutput) ||
+                (outputScope === "other" && sameOutput) ||
                 desktopNumber(candidate) !== desktopNumber(source) ||
                 (!controllerManaged.has(candidate) &&
                  floatingWindows.has(plasmaZonesWindowId(candidate)))) {

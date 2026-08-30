@@ -101,6 +101,44 @@ assert(directionalOutput(centerOutput, "down") === null,
 assert(outputForContextKey(contextKey("screen-right", 3)) === rightOutput,
     "late geometry updates must resolve the tree's intended output");
 
+function navigationWindow(name, output, geometry) {
+    return {
+        normalWindow: true,
+        managed: true,
+        minimized: false,
+        hidden: false,
+        deleted: false,
+        skipTaskbar: false,
+        skipSwitcher: false,
+        popupWindow: false,
+        dialog: false,
+        modal: false,
+        transient: false,
+        frameGeometry: geometry,
+        output: output,
+        desktops: [{x11DesktopNumber: 1}],
+        internalId: name,
+        resourceClass: name
+    };
+}
+
+const focusSource = navigationWindow("focus-source", centerOutput,
+    {x: 1280, y: 0, width: 1280, height: 1440});
+const localLeft = navigationWindow("local-left", centerOutput,
+    {x: 0, y: 0, width: 1280, height: 1440});
+const crossRight = navigationWindow("cross-right", rightOutput,
+    {x: 2560, y: 0, width: 1707, height: 960});
+workspace.windowList = function () {
+    return [focusSource, localLeft, crossRight];
+};
+assert(directionalNeighbor(focusSource, "right", "same") === null,
+    "same-output focus must stop at the physical monitor edge");
+assert(directionalNeighbor(focusSource, "right", "other") === crossRight,
+    "focus must cross to a mixed-DPI monitor at the edge");
+assert(directionalNeighbor(focusSource, "left", "same") === localLeft,
+    "a local pane must win before cross-output focus is considered");
+workspace.windowList = function () { return []; };
+
 const swapA = testWindow("swap-a", 7);
 const swapB = testWindow("swap-b", 8);
 const swapC = testWindow("swap-c", 9);
