@@ -46,6 +46,7 @@ const closingWindows = new Map();
 let nextGeneration = 1;
 let scratchpadWindow = null;
 let applyingControllerGeometry = false;
+let lastFocusedWindow = workspace.activeWindow;
 
 const RESIZE_STEP = 0.05;
 const RESIZE_STEP_FINE = 0.02;
@@ -62,50 +63,6 @@ function copyGeometry(rect) {
         width: rect.width,
         height: rect.height
     };
-}
-
-function omarchyUsableRect(output) {
-    const screen = output.geometry;
-    let left = screen.x;
-    let top = screen.y;
-    let right = screen.x + screen.width;
-    let bottom = screen.y + screen.height;
-    const edgeTolerance = 2;
-
-    // Auto-hide Plasma panels deliberately publish no work-area strut, but
-    // KWin keeps their dock windows and edge geometry available while hidden.
-    // Reserve every edge-touching dock so a revealed panel never sits behind
-    // an Omarchy tile. FancyZones intentionally bypasses this function.
-    workspace.windowList().forEach(function (window) {
-        if (!window.dock || window.output !== output || window.deleted) {
-            return;
-        }
-        const rect = window.frameGeometry;
-        const rectRight = rect.x + rect.width;
-        const rectBottom = rect.y + rect.height;
-        if (rect.y <= screen.y + edgeTolerance) {
-            top = Math.max(top, rectBottom);
-        }
-        if (rectBottom >= screen.y + screen.height - edgeTolerance) {
-            bottom = Math.min(bottom, rect.y);
-        }
-        if (rect.x <= screen.x + edgeTolerance) {
-            left = Math.max(left, rectRight);
-        }
-        if (rectRight >= screen.x + screen.width - edgeTolerance) {
-            right = Math.min(right, rect.x);
-        }
-    });
-
-    // Fall back defensively if a malformed panel claims opposing edges.
-    if (right - left < 160 || bottom - top < 160) {
-        left = screen.x;
-        top = screen.y;
-        right = screen.x + screen.width;
-        bottom = screen.y + screen.height;
-    }
-    return {x: left + 12, y: top + 12,
-        width: right - left - 24, height: bottom - top - 24};
 }
 
 function appIdForWindow(window) {
@@ -442,7 +399,9 @@ function applyControllerTree(key, output) {
     if (!tree || !output) {
         return;
     }
-    const rect = omarchyUsableRect(output);
+    const screen = output.geometry;
+    const rect = {x: screen.x + 12, y: screen.y + 12,
+        width: screen.width - 24, height: screen.height - 24};
     const targets = [];
     collectTreeGeometries(tree, rect, targets);
     // Grow coverage first, then shrink or move the displaced leaves. This
@@ -460,6 +419,11 @@ function applyControllerTree(key, output) {
     applyingControllerGeometry = true;
     try {
         targets.forEach(function (target) {
+            // PlasmaZones' floating handoff prevents its native autotiler from
+            // racing this tree, but autotileKeepFloatingAbove would otherwise
+            // place these pseudo-floating tiles above auto-hide Plasma docks.
+            // Real user/rule-floated windows never enter this target list.
+            target.window.keepAbove = false;
             target.window.frameGeometry = target.geometry;
         });
     } finally {
@@ -508,21 +472,6 @@ function collectLeaves(node, leaves) {
     collectLeaves(node.second, leaves);
 }
 
-function reapplyOmarchyTreesForOutput(output) {
-    if (!output) {
-        return;
-    }
-    treesByContext.forEach(function (tree, key) {
-        const leaves = [];
-        collectLeaves(tree, leaves);
-        if (leaves.some(function (entry) {
-            return entry.window && entry.window.output === output;
-        })) {
-            applyControllerTree(key, output);
-        }
-    });
-}
-
 function splitLeaf(node, target, window) {
     if (isLeaf(node)) {
         if (node !== target) {
@@ -555,6 +504,21 @@ function insertWindowBalanced(node, window) {
         }
     });
     return splitLeaf(node, target, window);
+}
+
+function insertWindowAtFocusedLeaf(node, window, focusedWindow) {
+    if (!node) {
+        return leaf(window);
+    }
+    const leaves = [];
+    collectLeaves(node, leaves);
+    const focusedLeaf = leaves.find(function (candidate) {
+        return candidate.window === focusedWindow;
+    });
+    if (focusedLeaf) {
+        return splitLeaf(node, focusedLeaf, window);
+    }
+    return insertWindowBalanced(node, window);
 }
 
 function pathToWindow(node, window, path) {
@@ -603,7 +567,7 @@ function resizeManagedWindow(window, axis, direction, fraction) {
     return false;
 }
 
-function adoptOmarchyWindows() {
+function adoptOmarchyWindows(preferredTarget) {
     const grouped = new Map();
     workspace.windowList().forEach(function (window) {
         if (!isTilingCandidate(window) ||
@@ -630,8 +594,11 @@ function adoptOmarchyWindows() {
         group.windows.forEach(function (window) {
             if (!window.fullScreen &&
                     !treeContainsWindow(treesByContext.get(key), window)) {
+                const focusedTarget = preferredTarget || lastFocusedWindow ||
+                    workspace.activeWindow;
                 treesByContext.set(key,
-                    insertWindowBalanced(treesByContext.get(key), window));
+                    insertWindowAtFocusedLeaf(treesByContext.get(key), window,
+                        focusedTarget));
             }
             if (controllerManaged.has(window)) {
                 return;
@@ -644,6 +611,40 @@ function adoptOmarchyWindows() {
         });
         applyControllerTree(key, group.output);
     });
+}
+
+function adoptWindowAtFocusedLeaf(window, focusedWindow) {
+    if (!isTilingCandidate(window) || !focusedWindow ||
+            !controllerManaged.has(focusedWindow) ||
+            !windowIsInOmarchy(focusedWindow) ||
+            desktopNumber(window) !== desktopNumber(focusedWindow) ||
+            window === scratchpadWindow || userFloated.has(window) ||
+            isRuleFloated(window)) {
+        return false;
+    }
+    const key = controllerManaged.get(focusedWindow);
+    const output = focusedWindow.output;
+    const screenId = screenIdForWindow(focusedWindow);
+    if (!key || !output || screenId === undefined) {
+        return false;
+    }
+
+    if (!treeContainsWindow(treesByContext.get(key), window)) {
+        treesByContext.set(key, insertWindowAtFocusedLeaf(
+            treesByContext.get(key), window, focusedWindow));
+    }
+    controllerManaged.set(window, key);
+    window.keepAbove = false;
+    applyControllerTree(key, output);
+    callDBus(SERVICE, OBJECT, TRACKING_INTERFACE,
+        "setWindowFloatingForScreen", plasmaZonesWindowId(window),
+        String(screenId), true, function () {
+            applyControllerTree(key, output);
+        });
+    log("inserted " + plasmaZonesWindowId(window) +
+        " at focused leaf " + plasmaZonesWindowId(focusedWindow) +
+        " on " + String(output.name));
+    return true;
 }
 
 function screenIdForWindow(window) {
@@ -1312,20 +1313,28 @@ function attach(window) {
         return;
     }
     attachedWindows.set(window, true);
-    if (window.dock) {
-        const output = window.output;
-        window.frameGeometryChanged.connect(function () {
-            reapplyOmarchyTreesForOutput(window.output || output);
-        });
-        window.closed.connect(function () {
-            attachedWindows.delete(window);
-            reapplyOmarchyTreesForOutput(output);
-        });
-        reapplyOmarchyTreesForOutput(output);
-        return;
+    const insertionTarget = lastFocusedWindow || workspace.activeWindow;
+    const adoptedAtFocus = adoptWindowAtFocusedLeaf(window, insertionTarget);
+    if (!adoptedAtFocus && windowIsInOmarchy(window)) {
+        adoptOmarchyWindows(insertionTarget);
     }
-    if (windowIsInOmarchy(window)) {
-        adoptOmarchyWindows();
+
+    if (window.active) {
+        lastFocusedWindow = window;
+    }
+    if (window.activeChanged && window.activeChanged.connect) {
+        window.activeChanged.connect(function () {
+            if (window.active && isTilingCandidate(window)) {
+                lastFocusedWindow = window;
+            }
+        });
+    }
+    if (window.keepAboveChanged && window.keepAboveChanged.connect) {
+        window.keepAboveChanged.connect(function () {
+            if (controllerManaged.has(window) && window.keepAbove) {
+                window.keepAbove = false;
+            }
+        });
     }
 
     window.interactiveMoveResizeStarted.connect(function () {
@@ -1370,7 +1379,9 @@ function attach(window) {
         if (!key && !closingWindows.has(window) &&
                 window !== scratchpadWindow && !userFloated.has(window) &&
                 !isRuleFloated(window) && windowIsInOmarchy(window)) {
-            adoptOmarchyWindows();
+            if (!adoptWindowAtFocusedLeaf(window, insertionTarget)) {
+                adoptOmarchyWindows(insertionTarget);
+            }
         }
     };
     ["minimizedChanged", "hiddenChanged", "deletedChanged",
@@ -1396,6 +1407,9 @@ function attach(window) {
         attachedWindows.delete(window);
         if (scratchpadWindow === window) {
             scratchpadWindow = null;
+        }
+        if (lastFocusedWindow === window) {
+            lastFocusedWindow = null;
         }
     });
 }

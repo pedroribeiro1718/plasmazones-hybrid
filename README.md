@@ -2,7 +2,7 @@
 
 Two predictable window-management modes on KDE Plasma/Wayland:
 
-- **Omarchy:** balanced binary trees, keyboard-only structural moves/resizing, workspaces, and a scratchpad.
+- **Omarchy:** a focus-driven dwindle tree, keyboard-only structural moves/resizing, workspaces, and a scratchpad.
 - **FancyZones:** a six-zone grid with drag overlay and multi-zone spanning.
 
 Switching modes rearranges existing windows: FancyZones fills the active zones and Omarchy rebuilds a balanced tree on each output.
@@ -45,7 +45,7 @@ The installation is user-local and never uses `sudo`. It backs up affected files
 
 In FancyZones, `Alt`-drag shows the overlay and `Ctrl+Alt`-drag spans adjacent zones. A mode switch uses the whole 3×2 grid: up to six windows partition all six cells; additional windows stack onto zones round-robin. A client whose minimum size exceeds one cell automatically spans adjacent cells. All geometry is calculated per output in logical coordinates, including mixed-DPI setups.
 
-In Omarchy, the KWin controller owns a balanced binary tree while PlasmaZones supplies mode/rule integration. New windows split the largest tile; removing or structurally moving one collapses its old branch immediately. Hidden, minimized, utility, popup, and dialog windows never reserve a tile. Edge docks and panels remain unobstructed even when their auto-hide mode publishes no KDE work-area reservation.
+In Omarchy, the KWin controller owns a dwindle tree while PlasmaZones supplies mode/rule integration. A new window follows and splits the focused tile, including its monitor (wide tiles split left/right; tall tiles split top/bottom), falling back to the largest tile only when no managed window is focused. Removing or structurally moving a window collapses its old branch immediately. Hidden, minimized, utility, popup, and dialog windows never reserve a tile. Auto-hide docks overlay tiles without reducing usable desktop space.
 
 Steam is floated only in Omarchy mode. Games are unaffected.
 New normal windows follow KWin's active-output placement. Per-monitor

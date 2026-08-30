@@ -18,33 +18,6 @@ function uniqueSorted(values) {
         .sort((a, b) => a - b);
 }
 
-function usableRect(output) {
-    const screen = output.geometry;
-    let left = screen.x;
-    let top = screen.y;
-    let right = screen.x + screen.width;
-    let bottom = screen.y + screen.height;
-    workspace.windowList().forEach(function (window) {
-        if (!window.dock || window.output !== output || window.deleted) {
-            return;
-        }
-        const rect = window.frameGeometry;
-        const rectRight = rect.x + rect.width;
-        const rectBottom = rect.y + rect.height;
-        if (rect.y <= screen.y + 2) top = Math.max(top, rectBottom);
-        if (rectBottom >= screen.y + screen.height - 2) bottom = Math.min(bottom, rect.y);
-        if (rect.x <= screen.x + 2) left = Math.max(left, rectRight);
-        if (rectRight >= screen.x + screen.width - 2) right = Math.min(right, rect.x);
-    });
-    if (right - left < 160 || bottom - top < 160) {
-        return {x: screen.x + 12, y: screen.y + 12,
-            right: screen.x + screen.width - 12,
-            bottom: screen.y + screen.height - 12};
-    }
-    return {x: left + 12, y: top + 12,
-        right: right - 12, bottom: bottom - 12};
-}
-
 for (const output of workspace.screenOrder) {
     const windows = workspace.windowList().filter(window =>
         candidate(window) && window.output === output);
@@ -53,13 +26,20 @@ for (const output of workspace.screenOrder) {
         continue;
     }
 
-    const inner = usableRect(output);
+    const screen = output.geometry;
+    const inner = {x: screen.x + 12, y: screen.y + 12,
+        right: screen.x + screen.width - 12,
+        bottom: screen.y + screen.height - 12};
+    const errors = [];
     const rects = windows.map(window => {
         const rect = window.frameGeometry;
         return {id: String(window.internalId), x: rect.x, y: rect.y,
-            right: rect.x + rect.width, bottom: rect.y + rect.height};
+            right: rect.x + rect.width, bottom: rect.y + rect.height,
+            keepAbove: Boolean(window.keepAbove)};
     });
-    const errors = [];
+    rects.filter(rect => rect.keepAbove).forEach(rect => {
+        errors.push(`tile-kept-above=${rect.id}`);
+    });
     const tolerance = 2;
     const minX = Math.min(...rects.map(rect => rect.x));
     const minY = Math.min(...rects.map(rect => rect.y));
