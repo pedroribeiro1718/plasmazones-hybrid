@@ -28,7 +28,7 @@ The installation is user-local and never uses `sudo`. It backs up affected files
 | `plasmazones-mode-toggle fancyzones` | Enter FancyZones and fill zones |
 | `plasmazones-mode-toggle reflow` | Rearrange without changing mode |
 | `plasmazones-mode-toggle status` | Show each monitor's active mode |
-| `Super+Arrow` | Focus the adjacent pane, crossing monitors at an edge |
+| `Super+Arrow` | Focus the adjacent pane; cross monitors only from an edge pane |
 | `Super+Shift+Arrow` | Swap with the neighboring pane in that direction |
 | `Super+Ctrl+Shift+Arrow` | Send the focused window to the physical screen in that direction |
 | `Super+T` | Toggle tiled/floating |

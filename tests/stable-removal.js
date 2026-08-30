@@ -128,6 +128,8 @@ const localLeft = navigationWindow("local-left", centerOutput,
     {x: 0, y: 0, width: 1280, height: 1440});
 const crossRight = navigationWindow("cross-right", rightOutput,
     {x: 2560, y: 0, width: 1707, height: 960});
+const interiorBottomLeft = navigationWindow("interior-bottom-left",
+    centerOutput, {x: 12, y: 724, width: 1264, height: 704});
 workspace.windowList = function () {
     return [focusSource, localLeft, crossRight];
 };
@@ -137,6 +139,10 @@ assert(directionalNeighbor(focusSource, "right", "other") === crossRight,
     "focus must cross to a mixed-DPI monitor at the edge");
 assert(directionalNeighbor(focusSource, "left", "same") === localLeft,
     "a local pane must win before cross-output focus is considered");
+assert(touchesOutputEdge(focusSource, "right"),
+    "a rightmost pane must be allowed to cross to the next output");
+assert(!touchesOutputEdge(interiorBottomLeft, "right"),
+    "an interior left-column pane must never skip to the next output");
 workspace.windowList = function () { return []; };
 
 const swapA = testWindow("swap-a", 7);

@@ -30,6 +30,7 @@ grep -q 'insertWindowAtFocusedLeaf' "$ROOT/kwin/plasmazones-omarchy-lock/content
 grep -q 'removeWindowPreservingShape' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'moveFocusedToScreen' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'directionalNeighbor(source, direction, "other")' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
+grep -q 'touchesOutputEdge(source, direction)' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'pendingScreenTransfers' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'trackingRequested' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'outputForContextKey' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"

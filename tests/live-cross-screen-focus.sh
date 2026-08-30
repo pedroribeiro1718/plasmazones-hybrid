@@ -64,37 +64,62 @@ grep -q 'Omarchy' < <("$ROOT/bin/plasmazones-mode-toggle" status) || {
 kdotool set_desktop "$TEST_DESKTOP" >/dev/null
 sleep 0.35
 
-launch LEFT
+launch TOP_LEFT
 invoke "PZH Send to Screen Left"
-left_id="${IDS[0]}"
-launch RIGHT
-invoke "PZH Send to Screen Right"
-right_id="${IDS[1]}"
+top_left_id="${IDS[0]}"
 
-left_geometry="$(geometry "$left_id")"
-right_geometry="$(geometry "$right_id")"
-left_x="${left_geometry%% *}"
-right_x="${right_geometry%% *}"
-(( right_x > left_x )) || {
-    echo "Could not place test windows on separate outputs." >&2
+launch LOCAL_RIGHT
+invoke "PZH Send to Screen Left"
+local_right_id="${IDS[1]}"
+
+kdotool windowactivate "$top_left_id" >/dev/null
+sleep 0.35
+launch BOTTOM_LEFT
+invoke "PZH Send to Screen Left"
+bottom_left_id="${IDS[2]}"
+
+launch OTHER_SCREEN
+invoke "PZH Send to Screen Right"
+other_screen_id="${IDS[3]}"
+
+top_left_geometry="$(geometry "$top_left_id")"
+local_right_geometry="$(geometry "$local_right_id")"
+bottom_left_geometry="$(geometry "$bottom_left_id")"
+other_screen_geometry="$(geometry "$other_screen_id")"
+bottom_left_x="${bottom_left_geometry%% *}"
+local_right_x="${local_right_geometry%% *}"
+other_screen_x="${other_screen_geometry%% *}"
+(( local_right_x > bottom_left_x && other_screen_x > local_right_x )) || {
+    echo "Could not construct the interior-pane cross-screen fixture." >&2
     exit 1
 }
 
-kdotool windowactivate "$left_id" >/dev/null
+# Regression from the user screencast: bottom-left must first select the
+# full-height right pane on the SAME output, never the next monitor.
+kdotool windowactivate "$bottom_left_id" >/dev/null
 sleep 0.35
 invoke "PZH Focus Right"
-[[ "$(active_window)" == "$right_id" ]] || {
-    echo "Focus did not cross from the left output to the right." >&2
+[[ "$(active_window)" == "$local_right_id" ]] || {
+    echo "Bottom-left focus skipped the same-output right pane." >&2
+    exit 1
+}
+
+# Only the edge pane may cross the output boundary.
+invoke "PZH Focus Right"
+[[ "$(active_window)" == "$other_screen_id" ]] || {
+    echo "Focus did not cross from the rightmost pane to the next output." >&2
     exit 1
 }
 invoke "PZH Focus Left"
-[[ "$(active_window)" == "$left_id" ]] || {
+[[ "$(active_window)" == "$local_right_id" ]] || {
     echo "Focus did not cross from the right output to the left." >&2
     exit 1
 }
 
-[[ "$(geometry "$left_id")" == "$left_geometry" ]]
-[[ "$(geometry "$right_id")" == "$right_geometry" ]]
+[[ "$(geometry "$top_left_id")" == "$top_left_geometry" ]]
+[[ "$(geometry "$local_right_id")" == "$local_right_geometry" ]]
+[[ "$(geometry "$bottom_left_id")" == "$bottom_left_geometry" ]]
+[[ "$(geometry "$other_screen_id")" == "$other_screen_geometry" ]]
 "$ROOT/tests/live-coverage.sh" 3
 
-printf 'Live focus crossed both outputs without moving either window.\n'
+printf 'Live focus preferred the local pane, then crossed at the edge, without moving windows.\n'

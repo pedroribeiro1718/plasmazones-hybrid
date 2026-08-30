@@ -54,6 +54,7 @@ let lastFocusedWindow = workspace.activeWindow;
 const RESIZE_STEP = 0.05;
 const RESIZE_STEP_FINE = 0.02;
 const RESIZE_STEP_COARSE = 0.10;
+const OUTPUT_EDGE_TOLERANCE = 32;
 
 function log(message) {
     console.info("plasmazones-omarchy-lock: " + message);
@@ -870,8 +871,10 @@ function focusDirection(direction) {
     // Keep intra-output navigation intuitive. Only cross an output boundary
     // when there is no eligible pane farther in that direction on the active
     // output, matching Hyprland's edge-navigation behavior.
-    const target = directionalNeighbor(source, direction, "same") ||
-        directionalNeighbor(source, direction, "other");
+    let target = directionalNeighbor(source, direction, "same");
+    if (!target && touchesOutputEdge(source, direction)) {
+        target = directionalNeighbor(source, direction, "other");
+    }
     if (target) {
         workspace.activeWindow = target;
     }
@@ -910,6 +913,30 @@ function rectanglesOverlapOnAxis(a, b, axis) {
     }
     return Math.max(a.y, b.y) <
         Math.min(a.y + a.height, b.y + b.height);
+}
+
+function touchesOutputEdge(window, direction) {
+    if (!window || !window.output || !window.output.geometry ||
+            !isUsableGeometry(window.frameGeometry)) {
+        return false;
+    }
+    const frame = window.frameGeometry;
+    const output = window.output.geometry;
+    if (direction === "left") {
+        return Math.abs(frame.x - output.x) <= OUTPUT_EDGE_TOLERANCE;
+    }
+    if (direction === "right") {
+        return Math.abs(frame.x + frame.width -
+            (output.x + output.width)) <= OUTPUT_EDGE_TOLERANCE;
+    }
+    if (direction === "up") {
+        return Math.abs(frame.y - output.y) <= OUTPUT_EDGE_TOLERANCE;
+    }
+    if (direction === "down") {
+        return Math.abs(frame.y + frame.height -
+            (output.y + output.height)) <= OUTPUT_EDGE_TOLERANCE;
+    }
+    return false;
 }
 
 function directionalNeighbor(source, direction, outputScope) {
