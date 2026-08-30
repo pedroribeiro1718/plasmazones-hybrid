@@ -148,8 +148,8 @@ workspace.windowList = function () { return []; };
 const destinationRight = testWindow("destination-right", 10);
 destinationRight.frameGeometry = rightOutput.geometry;
 const arrivingRight = testWindow("arriving-right", 11);
-tree = insertWindowAtArrivalEdge(leaf(destinationRight), arrivingRight,
-    "right", rightOutput, centerOutput.geometry);
+tree = insertWindowAtArrivalBoundary(leaf(destinationRight), arrivingRight,
+    "right", rightOutput);
 assert(tree.orientation === "v" && tree.first.window === arrivingRight &&
         tree.second.window === destinationRight,
     "left-to-right transfer must enter on the destination's left edge");
@@ -157,8 +157,8 @@ assert(tree.orientation === "v" && tree.first.window === arrivingRight &&
 const destinationLeft = testWindow("destination-left", 12);
 destinationLeft.frameGeometry = centerOutput.geometry;
 const arrivingLeft = testWindow("arriving-left", 13);
-tree = insertWindowAtArrivalEdge(leaf(destinationLeft), arrivingLeft,
-    "left", centerOutput, rightOutput.geometry);
+tree = insertWindowAtArrivalBoundary(leaf(destinationLeft), arrivingLeft,
+    "left", centerOutput);
 assert(tree.orientation === "v" && tree.first.window === destinationLeft &&
         tree.second.window === arrivingLeft,
     "right-to-left transfer must enter on the destination's right edge");
@@ -166,18 +166,41 @@ assert(tree.orientation === "v" && tree.first.window === destinationLeft &&
 const destinationDown = testWindow("destination-down", 14);
 destinationDown.frameGeometry = centerOutput.geometry;
 const arrivingDown = testWindow("arriving-down", 15);
-tree = insertWindowAtArrivalEdge(leaf(destinationDown), arrivingDown,
-    "down", centerOutput, upperOutput.geometry);
+tree = insertWindowAtArrivalBoundary(leaf(destinationDown), arrivingDown,
+    "down", centerOutput);
 assert(tree.orientation === "h" && tree.first.window === arrivingDown,
     "top-to-bottom transfer must enter on the destination's top edge");
 
 const destinationUp = testWindow("destination-up", 16);
 destinationUp.frameGeometry = upperOutput.geometry;
 const arrivingUp = testWindow("arriving-up", 17);
-tree = insertWindowAtArrivalEdge(leaf(destinationUp), arrivingUp,
-    "up", upperOutput, centerOutput.geometry);
+tree = insertWindowAtArrivalBoundary(leaf(destinationUp), arrivingUp,
+    "up", upperOutput);
 assert(tree.orientation === "h" && tree.second.window === arrivingUp,
     "bottom-to-top transfer must enter on the destination's bottom edge");
+
+const canonicalA = testWindow("canonical-a", 18);
+const canonicalB = testWindow("canonical-b", 19);
+const canonicalArrival = testWindow("canonical-arrival", 20);
+tree = {window: null, orientation: "v", ratio: 0.5,
+    first: leaf(canonicalA), second: leaf(canonicalB)};
+tree = insertWindowAtArrivalBoundary(tree, canonicalArrival, "right",
+    rightOutput);
+assert(tree.orientation === "v" && !isLeaf(tree.first) &&
+        tree.first.orientation === "h" && isLeaf(tree.second),
+    "three-window arrival must retain the canonical stacked-left/full-right archetype");
+assert(tree.first.first.window === canonicalArrival,
+    "left-to-right arrival must occupy the crossed boundary within the archetype");
+
+const canonicalRightArrival = testWindow("canonical-right-arrival", 21);
+tree = {window: null, orientation: "v", ratio: 0.5,
+    first: leaf(canonicalA), second: leaf(canonicalB)};
+tree = insertWindowAtArrivalBoundary(tree, canonicalRightArrival, "left",
+    centerOutput);
+assert(tree.orientation === "v" && !isLeaf(tree.first) &&
+        tree.first.orientation === "h" && isLeaf(tree.second) &&
+        tree.second.window === canonicalRightArrival,
+    "right-to-left arrival must take the full-height right pane without nested columns");
 
 const swapA = testWindow("swap-a", 7);
 const swapB = testWindow("swap-b", 8);

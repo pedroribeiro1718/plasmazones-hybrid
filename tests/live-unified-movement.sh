@@ -116,6 +116,14 @@ resident_left_x="${resident_left_geometry%% *}"
     echo "Right-to-left arrival did not enter on the destination's right edge." >&2
     exit 1
 }
+returned_size="${returned_geometry##* }"
+returned_height="${returned_size#*x}"
+resident_left_size="${resident_left_geometry##* }"
+resident_left_height="${resident_left_size#*x}"
+(( returned_height > resident_left_height )) || {
+    echo "Three-window return nested columns instead of restoring the canonical full-height pane." >&2
+    exit 1
+}
 
 "$ROOT/tests/live-coverage.sh" 3
 printf 'Unified movement entered both outputs at the boundary crossed.\n'

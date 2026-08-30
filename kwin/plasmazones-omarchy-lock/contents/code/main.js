@@ -371,6 +371,41 @@ function buildTree(windows, rect) {
         second: buildTree(ordered.slice(midpoint), secondRect)};
 }
 
+// Rebuild a monitor into one deterministic BSP archetype. Unlike buildTree,
+// this deliberately preserves the supplied leaf order instead of inferring a
+// new topology from transient client geometries. Cross-monitor moves use it so
+// an arrival cannot split an arbitrary leaf and create columns inside a pane.
+function buildCanonicalTree(windows, rect, rootOrientation) {
+    if (windows.length === 0) {
+        return null;
+    }
+    if (windows.length === 1) {
+        return leaf(windows[0]);
+    }
+    const orientation = rootOrientation ||
+        (rect.width >= rect.height ? "v" : "h");
+    const midpoint = Math.ceil(windows.length / 2);
+    const gap = 8;
+    let firstRect;
+    let secondRect;
+    if (orientation === "v") {
+        const width = (rect.width - gap) / 2;
+        firstRect = {x: rect.x, y: rect.y, width: width,
+            height: rect.height};
+        secondRect = {x: rect.x + width + gap, y: rect.y, width: width,
+            height: rect.height};
+    } else {
+        const height = (rect.height - gap) / 2;
+        firstRect = {x: rect.x, y: rect.y, width: rect.width,
+            height: height};
+        secondRect = {x: rect.x, y: rect.y + height + gap,
+            width: rect.width, height: height};
+    }
+    return {window: null, orientation: orientation, ratio: 0.5,
+        first: buildCanonicalTree(windows.slice(0, midpoint), firstRect),
+        second: buildCanonicalTree(windows.slice(midpoint), secondRect)};
+}
+
 function collectTreeGeometries(node, rect, targets) {
     if (!node) {
         return;
@@ -587,30 +622,7 @@ function insertWindowBalanced(node, window) {
     return splitLeaf(node, target, window);
 }
 
-function splitLeafAtArrivalEdge(node, target, window, direction) {
-    if (isLeaf(node)) {
-        if (node !== target) {
-            return node;
-        }
-        const arrivesFirst = direction === "right" || direction === "down";
-        return {
-            window: null,
-            orientation: direction === "left" || direction === "right" ?
-                "v" : "h",
-            ratio: 0.5,
-            first: arrivesFirst ? leaf(window) : node,
-            second: arrivesFirst ? node : leaf(window)
-        };
-    }
-    node.first = splitLeafAtArrivalEdge(node.first, target, window,
-        direction);
-    node.second = splitLeafAtArrivalEdge(node.second, target, window,
-        direction);
-    return node;
-}
-
-function insertWindowAtArrivalEdge(node, window, direction, output,
-        sourceGeometry) {
+function insertWindowAtArrivalBoundary(node, window, direction, output) {
     if (!node) {
         return leaf(window);
     }
@@ -618,46 +630,22 @@ function insertWindowAtArrivalEdge(node, window, direction, output,
     if (!outputGeometry) {
         return insertWindowBalanced(node, window);
     }
-    const source = isUsableGeometry(sourceGeometry) ? sourceGeometry :
-        outputGeometry;
-    const sourceCenterX = source.x + source.width / 2;
-    const sourceCenterY = source.y + source.height / 2;
-    const outputRight = outputGeometry.x + outputGeometry.width;
-    const outputBottom = outputGeometry.y + outputGeometry.height;
     const leaves = [];
     collectLeaves(node, leaves);
-    let target = leaves[0];
-    let bestScore = Number.MAX_VALUE;
-
-    leaves.forEach(function (candidate) {
-        const frame = candidate.window.frameGeometry;
-        const rect = isUsableGeometry(frame) ? frame : outputGeometry;
-        let boundaryDistance;
-        let perpendicularDistance;
-        if (direction === "right") {
-            boundaryDistance = Math.abs(rect.x - outputGeometry.x);
-            perpendicularDistance = Math.abs(
-                rect.y + rect.height / 2 - sourceCenterY);
-        } else if (direction === "left") {
-            boundaryDistance = Math.abs(rect.x + rect.width - outputRight);
-            perpendicularDistance = Math.abs(
-                rect.y + rect.height / 2 - sourceCenterY);
-        } else if (direction === "down") {
-            boundaryDistance = Math.abs(rect.y - outputGeometry.y);
-            perpendicularDistance = Math.abs(
-                rect.x + rect.width / 2 - sourceCenterX);
-        } else {
-            boundaryDistance = Math.abs(rect.y + rect.height - outputBottom);
-            perpendicularDistance = Math.abs(
-                rect.x + rect.width / 2 - sourceCenterX);
-        }
-        const score = boundaryDistance * 100000 + perpendicularDistance;
-        if (score < bestScore) {
-            bestScore = score;
-            target = candidate;
-        }
+    const ordered = leaves.map(function (candidate) {
+        return candidate.window;
     });
-    return splitLeafAtArrivalEdge(node, target, window, direction);
+    if (direction === "right" || direction === "down") {
+        ordered.unshift(window);
+    } else {
+        ordered.push(window);
+    }
+    const rect = {x: outputGeometry.x + 12, y: outputGeometry.y + 12,
+        width: outputGeometry.width - 24,
+        height: outputGeometry.height - 24};
+    const rootOrientation = direction === "left" || direction === "right" ?
+        "v" : "h";
+    return buildCanonicalTree(ordered, rect, rootOrientation);
 }
 
 function insertWindowAtFocusedLeaf(node, window, focusedWindow) {
@@ -1195,7 +1183,6 @@ function moveFocusedToScreen(direction) {
     const desktop = desktopNumber(window);
     const targetKey = contextKey(targetScreenId, desktop);
     const targetMode = modesByContext.get(targetKey);
-    const sourceGeometry = copyGeometry(window.frameGeometry);
     const needsManagedDestination = targetMode === OMARCHY_MODE &&
         window !== scratchpadWindow && !userFloated.has(window) &&
         !isRuleFloated(window);
@@ -1218,7 +1205,6 @@ function moveFocusedToScreen(direction) {
         targetKey: targetKey,
         targetMode: targetMode,
         direction: direction,
-        sourceGeometry: sourceGeometry,
         needsManagedDestination: needsManagedDestination,
         trackingRequested: false,
         trackingReady: !needsManagedDestination
@@ -1281,10 +1267,9 @@ function finalizePendingScreenTransfer(window) {
         if (!treeContainsWindow(treesByContext.get(transfer.targetKey),
                 window)) {
             treesByContext.set(transfer.targetKey,
-                insertWindowAtArrivalEdge(
+                insertWindowAtArrivalBoundary(
                     treesByContext.get(transfer.targetKey), window,
-                    transfer.direction, transfer.targetOutput,
-                    transfer.sourceGeometry));
+                    transfer.direction, transfer.targetOutput));
         }
         controllerManaged.set(window, transfer.targetKey);
         window.keepAbove = false;
