@@ -5,7 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT
 readonly TEST_DESKTOP="${PZH_TEST_DESKTOP:-4}"
-readonly ORIGINAL_DESKTOP="$(kdotool get_desktop)"
+ORIGINAL_DESKTOP="$(kdotool get_desktop)"
+readonly ORIGINAL_DESKTOP
 declare -a IDS=()
 declare -a PIDS=()
 
@@ -83,9 +84,9 @@ done
 
 read -r target_x target_y target_width target_height \
     <<<"$(geometry "${IDS[1]}")"
-read -r older_x older_y older_width older_height \
+read -r _older_x older_y _older_width older_height \
     <<<"$(geometry "${IDS[2]}")"
-read -r newer_x newer_y newer_width newer_height \
+read -r _newer_x newer_y _newer_width newer_height \
     <<<"$(geometry "${IDS[3]}")"
 
 near "$older_y" "$newer_y"
@@ -134,7 +135,7 @@ done
 
 read -r target_x target_y target_width target_height \
     <<<"$(geometry "${IDS[1]}")"
-read -r older_x older_y older_width older_height \
+read -r _older_x older_y _older_width older_height \
     <<<"$(geometry "${IDS[2]}")"
 kdotool windowclose "${IDS[1]}" >/dev/null
 sleep 0.45
