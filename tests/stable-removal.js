@@ -86,6 +86,10 @@ const upperOutput = {name: "upper", geometry: {
     x: 0, y: -1080, width: 1920, height: 1080
 }};
 workspace.screenOrder = [rightOutput, upperOutput, leftOutput, centerOutput];
+screenIdsByConnector.set("left", "screen-left");
+screenIdsByConnector.set("center", "screen-center");
+screenIdsByConnector.set("right", "screen-right");
+screenIdsByConnector.set("upper", "screen-upper");
 assert(directionalOutput(centerOutput, "left") === leftOutput,
     "left must use physical output geometry, not screen-list order");
 assert(directionalOutput(centerOutput, "right") === rightOutput,
@@ -94,6 +98,8 @@ assert(directionalOutput(centerOutput, "up") === upperOutput,
     "up must select the physically upper output");
 assert(directionalOutput(centerOutput, "down") === null,
     "a missing directional output must be a no-op");
+assert(outputForContextKey(contextKey("screen-right", 3)) === rightOutput,
+    "late geometry updates must resolve the tree's intended output");
 
 const swapA = testWindow("swap-a", 7);
 const swapB = testWindow("swap-b", 8);
@@ -117,6 +123,10 @@ assert(tree.orientation === "v" && tree.ratio === 0.6 &&
     "pane swapping must retain orientations and ratios");
 assert(tree.first.window === swapC && tree.second.second.window === swapA,
     "pane swapping must exchange only leaf occupants");
+assert(!isUsableGeometry(undefined) &&
+        !isUsableGeometry({x: 0, y: 0, width: 0, height: 100}) &&
+        isUsableGeometry({x: 0, y: 0, width: 100, height: 100}),
+    "screen transfer must reject transient or empty frame geometries");
 
 console.log("Stable removal tests passed.");
 `;

@@ -39,6 +39,7 @@ const modesByContext = new Map();
 const floatingWindows = new Map();
 const horizontallyMaximized = new Map();
 const pendingTreeRestore = new Map();
+const pendingScreenTransfers = new Map();
 const controllerManaged = new Map();
 const userFloated = new Map();
 const treesByContext = new Map();
@@ -65,6 +66,14 @@ function copyGeometry(rect) {
         width: rect.width,
         height: rect.height
     };
+}
+
+function isUsableGeometry(rect) {
+    return Boolean(rect && Number.isFinite(Number(rect.x)) &&
+        Number.isFinite(Number(rect.y)) &&
+        Number.isFinite(Number(rect.width)) &&
+        Number.isFinite(Number(rect.height)) &&
+        Number(rect.width) > 0 && Number(rect.height) > 0);
 }
 
 function appIdForWindow(window) {
@@ -410,8 +419,10 @@ function applyControllerTree(key, output) {
     // permits brief overlap during a structural edit but never exposes the
     // wallpaper as an intermediate hole while KWin processes each geometry.
     targets.sort(function (a, b) {
-        const aCurrent = a.window.frameGeometry;
-        const bCurrent = b.window.frameGeometry;
+        const aFrame = a.window.frameGeometry;
+        const bFrame = b.window.frameGeometry;
+        const aCurrent = isUsableGeometry(aFrame) ? aFrame : a.geometry;
+        const bCurrent = isUsableGeometry(bFrame) ? bFrame : b.geometry;
         const aGrowth = a.geometry.width * a.geometry.height -
             aCurrent.width * aCurrent.height;
         const bGrowth = b.geometry.width * b.geometry.height -
@@ -425,6 +436,9 @@ function applyControllerTree(key, output) {
             // racing this tree, but autotileKeepFloatingAbove would otherwise
             // place these pseudo-floating tiles above auto-hide Plasma docks.
             // Real user/rule-floated windows never enter this target list.
+            if (!target.window || target.window.deleted) {
+                return;
+            }
             target.window.keepAbove = false;
             target.window.frameGeometry = target.geometry;
         });
@@ -537,7 +551,11 @@ function splitLeaf(node, target, window) {
         if (node !== target) {
             return node;
         }
-        const rect = node.window.frameGeometry;
+        const nodeFrame = node.window.frameGeometry;
+        const windowFrame = window.frameGeometry;
+        const rect = isUsableGeometry(nodeFrame) ? nodeFrame :
+            (isUsableGeometry(windowFrame) ? windowFrame :
+                {width: 1, height: 1});
         return {window: null,
             orientation: rect.width >= rect.height ? "v" : "h",
             ratio: 0.5, first: node, second: leaf(window)};
@@ -556,7 +574,9 @@ function insertWindowBalanced(node, window) {
     let target = leaves[0];
     let largestArea = -1;
     leaves.forEach(function (candidate) {
-        const rect = candidate.window.frameGeometry;
+        const frame = candidate.window.frameGeometry;
+        const rect = isUsableGeometry(frame) ? frame :
+            {width: 1, height: 1};
         const area = rect.width * rect.height;
         if (area > largestArea) {
             largestArea = area;
@@ -1035,11 +1055,28 @@ function moveFocusedToScreen(direction) {
     if (!isTilingCandidate(window) || window.fullScreen || !window.output) {
         return;
     }
+    if (pendingScreenTransfers.has(window)) {
+        finalizePendingScreenTransfer(window);
+        return;
+    }
     const sourceOutput = window.output;
     const targetOutput = directionalOutput(sourceOutput, direction);
     if (!targetOutput) {
         return;
     }
+
+    const targetScreenId = screenIdsByConnector.get(String(targetOutput.name));
+    if (targetScreenId === undefined) {
+        log("cannot transfer: no PlasmaZones identity for " +
+            String(targetOutput.name));
+        return;
+    }
+    const desktop = desktopNumber(window);
+    const targetKey = contextKey(targetScreenId, desktop);
+    const targetMode = modesByContext.get(targetKey);
+    const needsManagedDestination = targetMode === OMARCHY_MODE &&
+        window !== scratchpadWindow && !userFloated.has(window) &&
+        !isRuleFloated(window);
 
     const oldKey = controllerManaged.get(window);
     if (oldKey) {
@@ -1049,35 +1086,91 @@ function moveFocusedToScreen(direction) {
         applyControllerTree(oldKey, sourceOutput);
     }
 
-    // KWin performs the physical output transfer. The hybrid controller then
-    // updates the destination placement model instead of leaving stale tree
-    // membership on the source output.
-    workspace.sendClientToScreen(window, targetOutput);
-    const targetScreenId = screenIdsByConnector.get(String(targetOutput.name));
-    const desktop = desktopNumber(window);
-    const targetKey = targetScreenId === undefined ? null :
-        contextKey(targetScreenId, desktop);
-    const targetMode = targetKey ? modesByContext.get(targetKey) : undefined;
+    // KWin's output change is asynchronous. Keep destination membership out
+    // of the tree until both output and frameGeometry have converged; some
+    // clients briefly expose an undefined frame while crossing outputs.
+    pendingScreenTransfers.set(window, {
+        sourceOutput: sourceOutput,
+        targetOutput: targetOutput,
+        targetScreenId: String(targetScreenId),
+        targetKey: targetKey,
+        targetMode: targetMode,
+        needsManagedDestination: needsManagedDestination,
+        trackingRequested: false,
+        trackingReady: !needsManagedDestination
+    });
 
-    if (targetMode === OMARCHY_MODE && window !== scratchpadWindow &&
-            !userFloated.has(window) && !isRuleFloated(window)) {
-        treesByContext.set(targetKey,
-            insertWindowBalanced(treesByContext.get(targetKey), window));
-        controllerManaged.set(window, targetKey);
+    // Let KWin's outputChanged reach PlasmaZones first. Its native handler
+    // releases the source engine and re-adds the live window at the target;
+    // declaring the target floating before this point is racy because that
+    // source cleanup clears the declaration again.
+    workspace.sendClientToScreen(window, targetOutput);
+    finalizePendingScreenTransfer(window);
+    workspace.activeWindow = window;
+    log("requested " + plasmaZonesWindowId(window) + " " + direction +
+        " from " + String(sourceOutput.name) + " to " +
+        String(targetOutput.name));
+}
+
+function finalizePendingScreenTransfer(window) {
+    const transfer = pendingScreenTransfers.get(window);
+    if (!transfer) {
+        return false;
+    }
+    if (window.deleted) {
+        pendingScreenTransfers.delete(window);
+        return true;
+    }
+    if (window.output !== transfer.targetOutput ||
+            !isUsableGeometry(window.frameGeometry)) {
+        return false;
+    }
+
+    if (transfer.needsManagedDestination && !transfer.trackingReady) {
+        if (!transfer.trackingRequested) {
+            transfer.trackingRequested = true;
+            callDBus(SERVICE, OBJECT, TRACKING_INTERFACE,
+                "setWindowFloatingForScreen", plasmaZonesWindowId(window),
+                transfer.targetScreenId, true, function () {
+                    const current = pendingScreenTransfers.get(window);
+                    if (!current) {
+                        return;
+                    }
+                    current.trackingReady = true;
+                    // A delayed source reflow can race the D-Bus reply. Now
+                    // that the destination owns the floating state, repeat the
+                    // physical hop if necessary and finish on its next signal.
+                    if (window.output !== current.targetOutput) {
+                        workspace.sendClientToScreen(window,
+                            current.targetOutput);
+                    }
+                    finalizePendingScreenTransfer(window);
+                });
+        }
+        return false;
+    }
+
+    pendingScreenTransfers.delete(window);
+    if (transfer.targetMode === OMARCHY_MODE &&
+            window !== scratchpadWindow && !userFloated.has(window) &&
+            !isRuleFloated(window)) {
+        if (!treeContainsWindow(treesByContext.get(transfer.targetKey),
+                window)) {
+            treesByContext.set(transfer.targetKey,
+                insertWindowBalanced(treesByContext.get(transfer.targetKey),
+                    window));
+        }
+        controllerManaged.set(window, transfer.targetKey);
         window.keepAbove = false;
-        callDBus(SERVICE, OBJECT, TRACKING_INTERFACE,
-            "setWindowFloatingForScreen", plasmaZonesWindowId(window),
-            String(targetScreenId), true, function () {
-                applyControllerTree(targetKey, targetOutput);
-            });
-        applyControllerTree(targetKey, targetOutput);
-    } else if (targetMode === 0) {
+        applyControllerTree(transfer.targetKey, transfer.targetOutput);
+    } else if (transfer.targetMode === 0) {
         requestFancyAdaptiveReflow();
     }
     workspace.activeWindow = window;
-    log("sent " + plasmaZonesWindowId(window) + " " + direction +
-        " from " + String(sourceOutput.name) + " to " +
-        String(targetOutput.name));
+    log("completed transfer of " + plasmaZonesWindowId(window) + " from " +
+        String(transfer.sourceOutput.name) + " to " +
+        String(transfer.targetOutput.name));
+    return true;
 }
 
 function desktopAt(number) {
@@ -1286,6 +1379,18 @@ function contextKey(screenId, desktop) {
     return String(screenId) + "|" + String(desktop);
 }
 
+function outputForContextKey(key) {
+    let match = null;
+    workspace.screenOrder.forEach(function (output) {
+        const screenId = screenIdsByConnector.get(String(output.name));
+        if (screenId !== undefined &&
+                String(key).indexOf(String(screenId) + "|") === 0) {
+            match = output;
+        }
+    });
+    return match;
+}
+
 function refreshOutputIdentity(output) {
     const connector = output ? String(output.name) : "";
     if (!connector) {
@@ -1484,6 +1589,10 @@ function attach(window) {
         moveResizeFinished(window);
     });
     window.frameGeometryChanged.connect(function () {
+        if (pendingScreenTransfers.has(window)) {
+            finalizePendingScreenTransfer(window);
+            return;
+        }
         const restoreKey = pendingTreeRestore.get(window);
         if (restoreKey) {
             pendingTreeRestore.delete(window);
@@ -1499,9 +1608,24 @@ function attach(window) {
         const managedKey = controllerManaged.get(window);
         if (managedKey && !applyingControllerGeometry &&
                 !window.fullScreen && !horizontallyMaximized.has(window)) {
-            applyControllerTree(managedKey, window.output);
+            applyControllerTree(managedKey,
+                outputForContextKey(managedKey) || window.output);
         }
     });
+    if (window.outputChanged && window.outputChanged.connect) {
+        window.outputChanged.connect(function () {
+            if (pendingScreenTransfers.has(window)) {
+                finalizePendingScreenTransfer(window);
+                return;
+            }
+            const managedKey = controllerManaged.get(window);
+            const intendedOutput = managedKey ?
+                outputForContextKey(managedKey) : null;
+            if (intendedOutput && intendedOutput !== window.output) {
+                applyControllerTree(managedKey, intendedOutput);
+            }
+        });
+    }
     const eligibilityChanged = function () {
         const key = controllerManaged.get(window);
         if (!isTilingCandidate(window)) {
@@ -1543,6 +1667,7 @@ function attach(window) {
         gestures.delete(window);
         horizontallyMaximized.delete(window);
         pendingTreeRestore.delete(window);
+        pendingScreenTransfers.delete(window);
         closingWindows.delete(window);
         openedOrder.delete(window);
         attachedWindows.delete(window);
