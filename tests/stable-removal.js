@@ -145,6 +145,40 @@ assert(!touchesOutputEdge(interiorBottomLeft, "right"),
     "an interior left-column pane must never skip to the next output");
 workspace.windowList = function () { return []; };
 
+const destinationRight = testWindow("destination-right", 10);
+destinationRight.frameGeometry = rightOutput.geometry;
+const arrivingRight = testWindow("arriving-right", 11);
+tree = insertWindowAtArrivalEdge(leaf(destinationRight), arrivingRight,
+    "right", rightOutput, centerOutput.geometry);
+assert(tree.orientation === "v" && tree.first.window === arrivingRight &&
+        tree.second.window === destinationRight,
+    "left-to-right transfer must enter on the destination's left edge");
+
+const destinationLeft = testWindow("destination-left", 12);
+destinationLeft.frameGeometry = centerOutput.geometry;
+const arrivingLeft = testWindow("arriving-left", 13);
+tree = insertWindowAtArrivalEdge(leaf(destinationLeft), arrivingLeft,
+    "left", centerOutput, rightOutput.geometry);
+assert(tree.orientation === "v" && tree.first.window === destinationLeft &&
+        tree.second.window === arrivingLeft,
+    "right-to-left transfer must enter on the destination's right edge");
+
+const destinationDown = testWindow("destination-down", 14);
+destinationDown.frameGeometry = centerOutput.geometry;
+const arrivingDown = testWindow("arriving-down", 15);
+tree = insertWindowAtArrivalEdge(leaf(destinationDown), arrivingDown,
+    "down", centerOutput, upperOutput.geometry);
+assert(tree.orientation === "h" && tree.first.window === arrivingDown,
+    "top-to-bottom transfer must enter on the destination's top edge");
+
+const destinationUp = testWindow("destination-up", 16);
+destinationUp.frameGeometry = upperOutput.geometry;
+const arrivingUp = testWindow("arriving-up", 17);
+tree = insertWindowAtArrivalEdge(leaf(destinationUp), arrivingUp,
+    "up", upperOutput, centerOutput.geometry);
+assert(tree.orientation === "h" && tree.second.window === arrivingUp,
+    "bottom-to-top transfer must enter on the destination's bottom edge");
+
 const swapA = testWindow("swap-a", 7);
 const swapB = testWindow("swap-b", 8);
 const swapC = testWindow("swap-c", 9);

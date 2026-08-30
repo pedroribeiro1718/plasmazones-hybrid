@@ -94,10 +94,28 @@ invoke "PZH Move Right"
 invoke "PZH Move Right"
 moved_geometry="$(geometry "$bottom_left_id")"
 moved_x="${moved_geometry%% *}"
+destination_neighbor_geometry="$(geometry "$other_screen_id")"
+destination_neighbor_x="${destination_neighbor_geometry%% *}"
 (( moved_x >= other_screen_x )) || {
     echo "Edge-pane movement did not continue onto the next output." >&2
     exit 1
 }
+(( moved_x < destination_neighbor_x )) || {
+    echo "Left-to-right arrival did not enter on the destination's left edge." >&2
+    exit 1
+}
+
+# From that left edge, the reverse move must enter monitor one at its right
+# boundary rather than appearing to the left of the resident aligned pane.
+invoke "PZH Move Left"
+returned_geometry="$(geometry "$bottom_left_id")"
+returned_x="${returned_geometry%% *}"
+resident_left_geometry="$(geometry "$top_left_id")"
+resident_left_x="${resident_left_geometry%% *}"
+(( returned_x < other_screen_x && returned_x > resident_left_x )) || {
+    echo "Right-to-left arrival did not enter on the destination's right edge." >&2
+    exit 1
+}
 
 "$ROOT/tests/live-coverage.sh" 3
-printf 'Unified movement swapped locally, then continued onto the next output.\n'
+printf 'Unified movement entered both outputs at the boundary crossed.\n'

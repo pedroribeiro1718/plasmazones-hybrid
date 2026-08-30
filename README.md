@@ -47,6 +47,8 @@ In FancyZones, `Alt`-drag shows the overlay and `Ctrl+Alt`-drag spans adjacent z
 
 In Omarchy, the KWin controller owns a dwindle tree while PlasmaZones supplies mode/rule integration. A new window follows and splits the focused tile, including its monitor (wide tiles split left/right; tall tiles split top/bottom), falling back to the largest tile only when no managed window is focused. Directional movement swaps pane occupants without changing the tree. When a window closes, minimizes, hides, or leaves the output, the oldest leaf in its sibling subtree takes over the vacated tile. Utility, popup, and dialog windows never reserve a tile. Auto-hide docks overlay tiles without reducing usable desktop space.
 
+Cross-monitor movement inserts at the boundary crossed: left-to-right enters on the destination's left edge, right-to-left on its right edge, down on its top edge, and up on its bottom edge.
+
 Steam is floated only in Omarchy mode. Games are unaffected.
 New normal windows follow KWin's active-output placement. Per-monitor
 self-routing rules prevent PlasmaZones' historical placement restore from

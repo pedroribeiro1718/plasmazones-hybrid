@@ -31,6 +31,7 @@ grep -q 'insertWindowAtFocusedLeaf' "$ROOT/kwin/plasmazones-omarchy-lock/content
 grep -q 'removeWindowPreservingShape' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'moveFocusedToScreen' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'moveFocusedAcrossLayout' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
+grep -q 'insertWindowAtArrivalEdge' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'PZH Direct Screen' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'directionalNeighbor(source, direction, "other")' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
 grep -q 'touchesOutputEdge(source, direction)' "$ROOT/kwin/plasmazones-omarchy-lock/contents/code/main.js"
